@@ -189,6 +189,7 @@ get_play_reports <- function(limit = 50, offset = 0, team_slug = Sys.getenv("INS
             id
             slug
             title
+            tags
           }
           user {
             profile {
@@ -245,12 +246,25 @@ get_all_play_reports <- function(max_records = 1000, page_size = 100) {
   user_df <- items_df$user
   profile_df <- user_df$profile
 
+  # Extract tags - handle both list and character vector formats
+  tags_list <- track_df$tags
+  if (is.list(tags_list)) {
+    # Convert list of vectors to comma-separated strings
+    tags_str <- sapply(tags_list, function(x) {
+      if (is.null(x) || length(x) == 0) return("")
+      paste(x, collapse = ", ")
+    })
+  } else {
+    tags_str <- rep("", nrow(track_df))
+  }
+
   # Build data frame
   df <- data.frame(
     id = items_df$id,
     trackId = track_df$id,
     trackSlug = track_df$slug,
     trackTitle = track_df$title,
+    trackTags = tags_str,
     userEmail = profile_df$email,
     completionPercent = ifelse(is.na(items_df$completionPercent), 0, items_df$completionPercent),
     timeSpent = ifelse(is.na(items_df$timeSpent), 0, items_df$timeSpent),

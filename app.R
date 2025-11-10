@@ -386,6 +386,7 @@ server <- function(input, output, session) {
         summarise(
           plays = n(),
           hours = sum(hoursConsumed, na.rm = TRUE),
+          tags = paste(unique(trackTags[trackTags != ""]), collapse = ", "),
           .groups = "drop"
         ) %>%
         arrange(desc(hours))
@@ -402,6 +403,7 @@ server <- function(input, output, session) {
         summarise(
           plays = n(),
           hours = sum(hoursConsumed, na.rm = TRUE),
+          tags = paste(unique(trackTags[trackTags != ""]), collapse = ", "),
           .groups = "drop"
         ) %>%
         arrange(desc(hours))
@@ -418,6 +420,7 @@ server <- function(input, output, session) {
         summarise(
           plays = n(),
           hours = sum(hoursConsumed, na.rm = TRUE),
+          tags = paste(unique(trackTags[trackTags != ""]), collapse = ", "),
           .groups = "drop"
         ) %>%
         arrange(desc(hours))
@@ -447,7 +450,7 @@ server <- function(input, output, session) {
         renderTable({
           track_data %>%
             mutate(hours = sprintf("%.2f", hours)) %>%
-            select(Track = trackTitle, Plays = plays, Hours = hours)
+            select(Track = trackTitle, Plays = plays, Hours = hours, Tags = tags)
         }, striped = TRUE, hover = TRUE, bordered = TRUE, width = "100%")
       )
     )
