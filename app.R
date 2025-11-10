@@ -97,6 +97,7 @@ ui <- page_sidebar(
         grid-template-rows: auto auto auto;
         row-gap: 0rem;
         padding: 0rem;
+        padding-bottom: 2rem;
       }
       .main-content-grid > :nth-child(2) {
         margin-top: 0.5rem;
@@ -118,8 +119,15 @@ ui <- page_sidebar(
         overflow: visible;
       }
       .table-card-container .bslib-card {
-        overflow: auto;
         max-height: 400px;
+        display: flex;
+        flex-direction: column;
+      }
+      .table-card-container .card-body {
+        overflow-y: auto !important;
+        overflow-x: hidden !important;
+        flex: 1;
+        min-height: 0;
       }
     "))
   ),
@@ -192,7 +200,7 @@ server <- function(input, output, session) {
 
   # Load data on startup and when refresh is clicked
   observeEvent(c(input$refresh_data, TRUE), {
-    withProgress(message = 'Loading hours data...', {
+    withProgress(message = 'Loading data...', {
 
       cat("\n[APP] Fetching consumption data...\n")
 
