@@ -24,7 +24,7 @@ source("instruqt_api.R")
 
 # UI Definition
 ui <- page_sidebar(
-  title = "Instruqt Hours Reporting",
+  title = "Instruqt Reporting",
   theme = bs_theme(
     version = 5,
     preset = "shiny",
@@ -35,7 +35,7 @@ ui <- page_sidebar(
 
   # Sidebar
   sidebar = sidebar(
-    title = "Filters",
+    #title = "Filters",
     width = 280,
 
     dateRangeInput(
@@ -97,9 +97,17 @@ ui <- page_sidebar(
   ),
 
   card(
-    card_header("Hours Consumed Over Time"),
+    card_header(
+      "Hours Consumed Over Time",
+      class = "d-flex justify-content-between align-items-center"
+    ),
     card_body(
-      plotlyOutput("hours_timeline", height = "450px")
+      navset_pill(
+        id = "time_granularity",
+        nav_panel("Daily", plotlyOutput("hours_timeline_daily", height = "450px")),
+        nav_panel("Weekly", plotlyOutput("hours_timeline_weekly", height = "450px")),
+        nav_panel("Monthly", plotlyOutput("hours_timeline_monthly", height = "450px"))
+      )
     ),
     full_screen = TRUE
   )
@@ -161,7 +169,7 @@ server <- function(input, output, session) {
   # Last updated text
   output$last_updated <- renderText({
     if (!is.null(rv$last_update)) {
-      paste("Updated:", format(rv$last_update, "%H:%M:%S"))
+      paste("Updated:", format(rv$last_update, "%b %d, %Y %H:%M:%S"))
     } else {
       "Not loaded"
     }
@@ -236,8 +244,8 @@ server <- function(input, output, session) {
     )
   })
 
-  # Hours timeline chart (bar chart)
-  output$hours_timeline <- renderPlotly({
+  # Hours timeline chart - Daily
+  output$hours_timeline_daily <- renderPlotly({
     req(rv$consumption_data)
 
     data <- rv$consumption_data %>%
@@ -248,6 +256,46 @@ server <- function(input, output, session) {
             marker = list(color = "#3c8dbc")) %>%
       layout(
         xaxis = list(title = "Date"),
+        yaxis = list(title = "Hours"),
+        showlegend = FALSE
+      )
+  })
+
+  # Hours timeline chart - Weekly
+  output$hours_timeline_weekly <- renderPlotly({
+    req(rv$consumption_data)
+
+    data <- rv$consumption_data %>%
+      mutate(date = as.Date(date)) %>%
+      mutate(week = floor_date(date, "week")) %>%
+      group_by(week) %>%
+      summarise(sandboxHours = sum(sandboxHours, na.rm = TRUE), .groups = "drop")
+
+    plot_ly(data, x = ~week, y = ~sandboxHours,
+            type = "bar",
+            marker = list(color = "#3c8dbc")) %>%
+      layout(
+        xaxis = list(title = "Week"),
+        yaxis = list(title = "Hours"),
+        showlegend = FALSE
+      )
+  })
+
+  # Hours timeline chart - Monthly
+  output$hours_timeline_monthly <- renderPlotly({
+    req(rv$consumption_data)
+
+    data <- rv$consumption_data %>%
+      mutate(date = as.Date(date)) %>%
+      mutate(month = floor_date(date, "month")) %>%
+      group_by(month) %>%
+      summarise(sandboxHours = sum(sandboxHours, na.rm = TRUE), .groups = "drop")
+
+    plot_ly(data, x = ~month, y = ~sandboxHours,
+            type = "bar",
+            marker = list(color = "#3c8dbc")) %>%
+      layout(
+        xaxis = list(title = "Month"),
         yaxis = list(title = "Hours"),
         showlegend = FALSE
       )
