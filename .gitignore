@@ -1,0 +1,28 @@
+# R environment
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+
+# Shiny logs
+*.log
+
+# Environment variables (contains API keys)
+.env
+.Renviron
+
+# renv - exclude library but keep lock file
+renv/library/
+renv/local/
+renv/cellar/
+renv/lock/
+renv/python/
+renv/sandbox/
+renv/staging/
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/

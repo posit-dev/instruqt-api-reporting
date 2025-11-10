@@ -1,0 +1,6 @@
+# Instruqt API Configuration
+# Copy this file to .Renviron and add your actual API key
+
+# Your Instruqt API Key
+# Get this from: https://play.instruqt.com (Account Settings > API)
+INSTRUQT_API_KEY=your_api_key_here
