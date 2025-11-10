@@ -35,7 +35,6 @@ ui <- page_sidebar(
 
   # Sidebar
   sidebar = sidebar(
-    #title = "Filters",
     width = 280,
 
     dateRangeInput(
@@ -62,54 +61,121 @@ ui <- page_sidebar(
     )
   ),
 
-  # Custom CSS to ensure all value boxes are the same height
+  # Custom CSS to ensure all value boxes are the same height and fix card width
   tags$head(
     tags$style(HTML("
       .bslib-value-box {
-        height: 150px !important;
-        min-height: 150px !important;
-        max-height: 150px !important;
+        height: 120px !important;
+        min-height: 120px !important;
+        max-height: 120px !important;
+      }
+      /* Fix card width and remove scrollbars */
+      .bslib-card {
+        width: 100% !important;
+        max-width: 100% !important;
+        overflow: hidden !important;
+        margin-top: 1rem !important;
+      }
+      .bslib-card .card-body {
+        width: 100% !important;
+        max-width: 100% !important;
+        overflow: hidden !important;
+        box-sizing: border-box !important;
+        padding: 1rem !important;
+      }
+      /* Ensure plotly charts fit within their container */
+      .plotly {
+        width: 100% !important;
+        max-width: 100% !important;
+      }
+      .js-plotly-plot {
+        width: 100% !important;
+      }
+      /* Fixed layout container */
+      .main-content-grid {
+        display: grid;
+        grid-template-rows: auto auto auto;
+        row-gap: 0rem;
+        padding: 0rem;
+      }
+      .main-content-grid > :nth-child(2) {
+        margin-top: 0.5rem;
+      }
+      .main-content-grid > :nth-child(3) {
+        margin-top: 2rem;
+      }
+      .plot-card-container {
+        min-height: 450px;
+        max-height: 450px;
+        overflow: visible;
+      }
+      .plot-card-container .bslib-card {
+        overflow: hidden;
+      }
+      .table-card-container {
+        min-height: 400px;
+        max-height: 400px;
+        overflow: visible;
+      }
+      .table-card-container .bslib-card {
+        overflow: auto;
+        max-height: 400px;
       }
     "))
   ),
 
-  # Main content
-  layout_columns(
-    col_widths = c(4, 4, 4),
+  # Main content with fixed grid layout
+  div(
+    class = "main-content-grid",
 
-    value_box(
-      title = "Hours Consumed (Selected Range)",
-      value = textOutput("total_hours_value"),
-      showcase = icon("calendar-days"),
-      theme = "primary",
-      height = "150px"
+    # Row 1: Value boxes
+    layout_columns(
+      col_widths = c(4, 4, 4),
+
+      value_box(
+        title = "Hours Consumed (Selected Range)",
+        value = textOutput("total_hours_value"),
+        showcase = icon("calendar-days"),
+        theme = "primary",
+        height = "120px"
+      ),
+
+      value_box(
+        title = "Total Since License Start",
+        value = textOutput("license_total_hours_value"),
+        showcase = icon("clock"),
+        theme = "info",
+        height = "120px"
+      ),
+
+      uiOutput("license_usage_box")
     ),
 
-    value_box(
-      title = "Total Since License Start",
-      value = textOutput("license_total_hours_value"),
-      showcase = icon("clock"),
-      theme = "info",
-      height = "150px"
-    ),
-
-    uiOutput("license_usage_box")
-  ),
-
-  card(
-    card_header(
-      "Hours Consumed Over Time",
-      class = "d-flex justify-content-between align-items-center"
-    ),
-    card_body(
-      navset_pill(
-        id = "time_granularity",
-        nav_panel("Daily", plotlyOutput("hours_timeline_daily", height = "450px")),
-        nav_panel("Weekly", plotlyOutput("hours_timeline_weekly", height = "450px")),
-        nav_panel("Monthly", plotlyOutput("hours_timeline_monthly", height = "450px"))
+    # Row 2: Plot card
+    div(
+      class = "plot-card-container",
+      card(
+        card_header(
+          "Hours Consumed Over Time",
+          class = "d-flex justify-content-between align-items-center"
+        ),
+        card_body(
+          navset_pill(
+            id = "time_granularity",
+            nav_panel("Daily", plotlyOutput("hours_timeline_daily", height = "350px")),
+            nav_panel("Weekly", plotlyOutput("hours_timeline_weekly", height = "350px")),
+            nav_panel("Monthly", plotlyOutput("hours_timeline_monthly", height = "350px"))
+          )
+        ),
+        full_screen = TRUE
       )
     ),
-    full_screen = TRUE
+
+    # Row 3: Track breakdown card
+    div(
+      class = "table-card-container",
+      uiOutput("track_breakdown_card")
+    )
   )
 )
 
@@ -120,6 +186,7 @@ server <- function(input, output, session) {
   rv <- reactiveValues(
     consumption_data = NULL,
     license_total_data = NULL,
+    play_reports_data = NULL,
     last_update = NULL
   )
 
@@ -154,6 +221,18 @@ server <- function(input, output, session) {
         result
       }, error = function(e) {
         cat("[APP] ERROR loading license total data:\n")
+        cat("  Message:", e$message, "\n")
+        NULL
+      })
+
+      # Fetch play reports for track breakdown
+      cat("\n[APP] Fetching play reports for track breakdown...\n")
+      rv$play_reports_data <- tryCatch({
+        result <- get_all_play_reports(max_records = 5000, page_size = 100)
+        cat("[APP] Successfully loaded play reports\n")
+        result
+      }, error = function(e) {
+        cat("[APP] ERROR loading play reports:\n")
         cat("  Message:", e$message, "\n")
         NULL
       })
@@ -230,15 +309,15 @@ server <- function(input, output, session) {
     }
 
     div(
-      style = "height: 150px;",
+      style = "height: 120px;",
       value_box(
         title = "License Usage",
         value = sprintf("%.1f%%", usage_percent),
         showcase = icon("gauge-high"),
         theme = theme_color,
-        height = "150px",
-        max_height = "150px",
-        min_height = "150px",
+        height = "120px",
+        max_height = "120px",
+        min_height = "120px",
         tags$style(HTML(sprintf(".bg-%s { %s }", theme_color, custom_bg)))
       )
     )
@@ -253,12 +332,103 @@ server <- function(input, output, session) {
 
     plot_ly(data, x = ~date, y = ~sandboxHours,
             type = "bar",
-            marker = list(color = "#3c8dbc")) %>%
+            marker = list(color = "#3c8dbc"),
+            source = "daily_plot") %>%
       layout(
         xaxis = list(title = "Date"),
         yaxis = list(title = "Hours"),
-        showlegend = FALSE
+        showlegend = FALSE,
+        autosize = TRUE,
+        margin = list(l = 50, r = 20, t = 20, b = 50)
       )
+  })
+
+  # Unified track breakdown card that shows below the chart
+  output$track_breakdown_card <- renderUI({
+    # Check which tab is active and get corresponding click data
+    click_data_daily <- event_data("plotly_click", source = "daily_plot")
+    click_data_weekly <- event_data("plotly_click", source = "weekly_plot")
+    click_data_monthly <- event_data("plotly_click", source = "monthly_plot")
+
+    # Determine which plot was clicked and process accordingly
+    if (!is.null(click_data_daily)) {
+      req(rv$play_reports_data)
+      clicked_date <- as.Date(click_data_daily$x)
+
+      track_data <- rv$play_reports_data %>%
+        mutate(date = as.Date(started)) %>%
+        filter(date == clicked_date) %>%
+        group_by(trackTitle) %>%
+        summarise(
+          plays = n(),
+          hours = sum(hoursConsumed, na.rm = TRUE),
+          .groups = "drop"
+        ) %>%
+        arrange(desc(hours))
+
+      title <- paste("Track Breakdown for", format(clicked_date, "%B %d, %Y"))
+
+    } else if (!is.null(click_data_weekly)) {
+      req(rv$play_reports_data)
+      clicked_week <- as.Date(click_data_weekly$x)
+
+      track_data <- rv$play_reports_data %>%
+        mutate(date = as.Date(started), week = floor_date(date, "week")) %>%
+        filter(week == clicked_week) %>%
+        group_by(trackTitle) %>%
+        summarise(
+          plays = n(),
+          hours = sum(hoursConsumed, na.rm = TRUE),
+          .groups = "drop"
+        ) %>%
+        arrange(desc(hours))
+
+      title <- paste("Track Breakdown for Week of", format(clicked_week, "%B %d, %Y"))
+
+    } else if (!is.null(click_data_monthly)) {
+      req(rv$play_reports_data)
+      clicked_month <- as.Date(click_data_monthly$x)
+
+      track_data <- rv$play_reports_data %>%
+        mutate(date = as.Date(started), month = floor_date(date, "month")) %>%
+        filter(month == clicked_month) %>%
+        group_by(trackTitle) %>%
+        summarise(
+          plays = n(),
+          hours = sum(hoursConsumed, na.rm = TRUE),
+          .groups = "drop"
+        ) %>%
+        arrange(desc(hours))
+
+      title <- paste("Track Breakdown for", format(clicked_month, "%B %Y"))
+
+    } else {
+      # No bar clicked yet
+      return(NULL)
+    }
+
+    # Return card with the track data
+    if (nrow(track_data) == 0) {
+      return(
+        card(
+          card_header("Track Breakdown"),
+          card_body(
+            p("No track data available for this period", class = "text-muted text-center")
+          )
+        )
+      )
+    }
+
+    card(
+      card_header(title),
+      card_body(
+        renderTable({
+          track_data %>%
+            mutate(hours = sprintf("%.2f", hours)) %>%
+            select(Track = trackTitle, Plays = plays, Hours = hours)
+        }, striped = TRUE, hover = TRUE, bordered = TRUE, width = "100%")
+      )
+    )
   })
 
   # Hours timeline chart - Weekly
@@ -273,11 +443,14 @@ server <- function(input, output, session) {
 
     plot_ly(data, x = ~week, y = ~sandboxHours,
             type = "bar",
-            marker = list(color = "#3c8dbc")) %>%
+            marker = list(color = "#3c8dbc"),
+            source = "weekly_plot") %>%
       layout(
         xaxis = list(title = "Week"),
         yaxis = list(title = "Hours"),
-        showlegend = FALSE
+        showlegend = FALSE,
+        autosize = TRUE,
+        margin = list(l = 50, r = 20, t = 20, b = 50)
       )
   })
 
@@ -293,11 +466,14 @@ server <- function(input, output, session) {
 
     plot_ly(data, x = ~month, y = ~sandboxHours,
             type = "bar",
-            marker = list(color = "#3c8dbc")) %>%
+            marker = list(color = "#3c8dbc"),
+            source = "monthly_plot") %>%
       layout(
         xaxis = list(title = "Month"),
         yaxis = list(title = "Hours"),
-        showlegend = FALSE
+        showlegend = FALSE,
+        autosize = TRUE,
+        margin = list(l = 50, r = 20, t = 20, b = 50)
       )
   })
 }

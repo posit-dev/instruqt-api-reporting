@@ -170,3 +170,104 @@ get_consumption_details <- function(start_date, end_date, play_type = "ALL", tea
 
   return(df)
 }
+
+#' Get Play Reports
+#'
+#' @param limit Number of records to retrieve
+#' @param offset Offset for pagination
+#' @param team_slug Team slug (defaults to INSTRUQT_TEAM_SLUG env var)
+#' @return List with play reports data and pagination info
+get_play_reports <- function(limit = 50, offset = 0, team_slug = Sys.getenv("INSTRUQT_TEAM_SLUG")) {
+  log_info("Fetching play reports (limit=", limit, ", offset=", offset, ")")
+
+  query <- '
+    query GetPlayReports($input: PlayReportInput!) {
+      playReports(input: $input) {
+        items {
+          id
+          track {
+            id
+            slug
+            title
+          }
+          user {
+            profile {
+              email
+            }
+          }
+          completionPercent
+          timeSpent
+          pauseDuration
+          startedAt
+          totalChallenges
+          completedChallenges
+        }
+        totalItems
+      }
+    }
+  '
+
+  variables <- list(
+    input = list(
+      limit = limit,
+      offset = offset,
+      teamSlug = team_slug
+    )
+  )
+
+  result <- execute_graphql_query(query, variables)
+
+  if (!is.null(result$playReports$totalItems)) {
+    log_info("Retrieved ", length(result$playReports$items), " of ", result$playReports$totalItems, " total play reports")
+  }
+
+  return(result$playReports)
+}
+
+#' Get All Play Reports (with pagination)
+#'
+#' @param max_records Maximum number of records to retrieve
+#' @param page_size Number of records per page
+#' @return Data frame with all play reports
+get_all_play_reports <- function(max_records = 1000, page_size = 100) {
+  log_info("Fetching all play reports (API returns complete dataset)")
+
+  result <- get_play_reports(limit = max_records, offset = 0)
+
+  if (is.null(result$items) || nrow(result$items) == 0) {
+    return(data.frame())
+  }
+
+  items_df <- result$items
+
+  # Extract nested data frames
+  track_df <- items_df$track
+  user_df <- items_df$user
+  profile_df <- user_df$profile
+
+  # Build data frame
+  df <- data.frame(
+    id = items_df$id,
+    trackId = track_df$id,
+    trackSlug = track_df$slug,
+    trackTitle = track_df$title,
+    userEmail = profile_df$email,
+    completionPercent = ifelse(is.na(items_df$completionPercent), 0, items_df$completionPercent),
+    timeSpent = ifelse(is.na(items_df$timeSpent), 0, items_df$timeSpent),
+    hoursConsumed = ifelse(is.na(items_df$timeSpent), 0, items_df$timeSpent / 3600),
+    pauseDuration = ifelse(is.na(items_df$pauseDuration), 0, items_df$pauseDuration),
+    started = items_df$startedAt,
+    totalChallenges = ifelse(is.na(items_df$totalChallenges), 0, items_df$totalChallenges),
+    completedChallenges = ifelse(is.na(items_df$completedChallenges), 0, items_df$completedChallenges),
+    state = ifelse(items_df$completionPercent >= 100, "completed",
+                  ifelse(items_df$completionPercent > 0, "started", "not_started")),
+    stringsAsFactors = FALSE
+  )
+
+  # Remove any duplicate records by ID
+  df <- dplyr::distinct(df, id, .keep_all = TRUE)
+
+  log_info("Retrieved ", nrow(df), " unique play reports")
+
+  return(df)
+}
