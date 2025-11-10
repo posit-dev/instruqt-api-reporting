@@ -345,14 +345,18 @@ server <- function(input, output, session) {
 
   # Unified track breakdown card that shows below the chart
   output$track_breakdown_card <- renderUI({
-    # Check which tab is active and get corresponding click data
+    req(rv$play_reports_data)
+
+    # Get click data from all sources
     click_data_daily <- event_data("plotly_click", source = "daily_plot")
     click_data_weekly <- event_data("plotly_click", source = "weekly_plot")
     click_data_monthly <- event_data("plotly_click", source = "monthly_plot")
 
-    # Determine which plot was clicked and process accordingly
-    if (!is.null(click_data_daily)) {
-      req(rv$play_reports_data)
+    # Check which tab is active
+    active_tab <- input$time_granularity
+
+    # Process based on active tab and corresponding click data
+    if (active_tab == "Daily" && !is.null(click_data_daily)) {
       clicked_date <- as.Date(click_data_daily$x)
 
       track_data <- rv$play_reports_data %>%
@@ -368,8 +372,7 @@ server <- function(input, output, session) {
 
       title <- paste("Track Breakdown for", format(clicked_date, "%B %d, %Y"))
 
-    } else if (!is.null(click_data_weekly)) {
-      req(rv$play_reports_data)
+    } else if (active_tab == "Weekly" && !is.null(click_data_weekly)) {
       clicked_week <- as.Date(click_data_weekly$x)
 
       track_data <- rv$play_reports_data %>%
@@ -385,8 +388,7 @@ server <- function(input, output, session) {
 
       title <- paste("Track Breakdown for Week of", format(clicked_week, "%B %d, %Y"))
 
-    } else if (!is.null(click_data_monthly)) {
-      req(rv$play_reports_data)
+    } else if (active_tab == "Monthly" && !is.null(click_data_monthly)) {
       clicked_month <- as.Date(click_data_monthly$x)
 
       track_data <- rv$play_reports_data %>%
@@ -403,7 +405,7 @@ server <- function(input, output, session) {
       title <- paste("Track Breakdown for", format(clicked_month, "%B %Y"))
 
     } else {
-      # No bar clicked yet
+      # No bar clicked yet or wrong tab active
       return(NULL)
     }
 
