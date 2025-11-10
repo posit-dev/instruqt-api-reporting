@@ -6,6 +6,7 @@ library(bslib)
 library(plotly)
 library(dplyr)
 library(lubridate)
+library(DT)
 
 # Enable console logging for errors
 options(shiny.error = function() {
@@ -23,7 +24,7 @@ cat("API key set:", Sys.getenv("INSTRUQT_API_KEY") != "", "\n\n")
 source("instruqt_api.R")
 
 # UI Definition
-ui <- page_sidebar(
+ui <- page_navbar(
   title = "Instruqt Reporting",
   theme = bs_theme(
     version = 5,
@@ -33,36 +34,7 @@ ui <- page_sidebar(
     fg = "#212529"
   ),
 
-  # Sidebar
-  sidebar = sidebar(
-    width = 280,
-
-    dateRangeInput(
-      "date_range",
-      "Date Range:",
-      start = "2025-05-10",
-      end = Sys.Date(),
-      width = "100%"
-    ),
-
-    actionButton(
-      "refresh_data",
-      "Refresh Data",
-      icon = icon("refresh"),
-      width = "100%",
-      class = "btn-primary mt-3"
-    ),
-
-    hr(),
-
-    div(
-      class = "text-muted small",
-      textOutput("last_updated")
-    )
-  ),
-
-  # Custom CSS to ensure all value boxes are the same height and fix card width
-  tags$head(
+  header = tags$head(
     tags$style(HTML("
       .bslib-value-box {
         height: 120px !important;
@@ -132,8 +104,41 @@ ui <- page_sidebar(
     "))
   ),
 
-  # Main content with fixed grid layout
-  div(
+  # Overview Page
+  nav_panel(
+    title = "Overview",
+    icon = icon("chart-line"),
+
+    layout_sidebar(
+      sidebar = sidebar(
+        width = 280,
+
+        dateRangeInput(
+          "date_range",
+          "Date Range:",
+          start = "2025-05-10",
+          end = Sys.Date(),
+          width = "100%"
+        ),
+
+        actionButton(
+          "refresh_data",
+          "Refresh Data",
+          icon = icon("refresh"),
+          width = "100%",
+          class = "btn-primary mt-3"
+        ),
+
+        hr(),
+
+        div(
+          class = "text-muted small",
+          textOutput("last_updated")
+        )
+      ),
+
+      # Main content with fixed grid layout
+      div(
     class = "main-content-grid",
 
     # Row 1: Value boxes
@@ -184,13 +189,90 @@ ui <- page_sidebar(
       class = "table-card-container",
       uiOutput("track_breakdown_card")
     )
+      )
+    )
+  ),
+
+  # Tracks Page
+  nav_panel(
+    title = "Tracks",
+    icon = icon("list-check"),
+
+    layout_sidebar(
+      sidebar = sidebar(
+        width = 280,
+
+        dateRangeInput(
+          "tracks_date_range",
+          "Date Range:",
+          start = "2025-05-10",
+          end = Sys.Date(),
+          width = "100%"
+        ),
+
+        selectInput(
+          "track_tag_filter",
+          "Filter by Tag:",
+          choices = c("All Tags" = "all"),
+          width = "100%"
+        ),
+
+        actionButton(
+          "refresh_tracks",
+          "Refresh Data",
+          icon = icon("refresh"),
+          width = "100%",
+          class = "btn-primary mt-3"
+        ),
+
+        hr(),
+
+        div(
+          class = "text-muted small",
+          textOutput("tracks_last_updated")
+        )
+      ),
+
+      # Main content
+      div(
+        class = "p-3",
+
+        # Summary cards
+        layout_columns(
+          col_widths = c(6, 6),
+
+          value_box(
+            title = "Total Tracks",
+            value = textOutput("total_tracks_value"),
+            showcase = icon("list"),
+            theme = "primary",
+            height = "120px"
+          ),
+
+          value_box(
+            title = "Total Plays",
+            value = textOutput("total_plays_value"),
+            showcase = icon("play"),
+            theme = "info",
+            height = "120px"
+          )
+        ),
+
+        # Tracks table
+        div(
+          class = "mt-3",
+          h4("Track Details"),
+          DT::dataTableOutput("tracks_table")
+        )
+      )
+    )
   )
 )
 
 # Server Logic
 server <- function(input, output, session) {
 
-  # Reactive values
+  # Reactive values (shared between both pages)
   rv <- reactiveValues(
     consumption_data = NULL,
     license_total_data = NULL,
@@ -198,8 +280,8 @@ server <- function(input, output, session) {
     last_update = NULL
   )
 
-  # Load data on startup and when refresh is clicked
-  observeEvent(c(input$refresh_data, TRUE), {
+  # Load data on startup and when refresh is clicked from either page
+  observeEvent(c(input$refresh_data, input$refresh_tracks, TRUE), {
     # Show loading notification with spinner
     loading_id <- showNotification(
       ui = tagList(
@@ -247,6 +329,17 @@ server <- function(input, output, session) {
       rv$play_reports_data <- tryCatch({
         result <- get_all_play_reports(max_records = 5000, page_size = 100)
         cat("[APP] Successfully loaded play reports\n")
+
+        # Update tag filter choices for Tracks page
+        if (!is.null(result) && nrow(result) > 0) {
+          all_tags <- unique(unlist(strsplit(result$trackTags, ", ")))
+          all_tags <- all_tags[all_tags != ""]
+          all_tags <- sort(all_tags)
+
+          updateSelectInput(session, "track_tag_filter",
+                           choices = c("All Tags" = "all", setNames(all_tags, all_tags)))
+        }
+
         result
       }, error = function(e) {
         cat("[APP] ERROR loading play reports:\n")
@@ -501,6 +594,88 @@ server <- function(input, output, session) {
         margin = list(l = 50, r = 20, t = 20, b = 50)
       )
   })
+
+  # ===== TRACKS PAGE LOGIC =====
+
+  # Last updated text for tracks page (uses shared rv$last_update)
+  output$tracks_last_updated <- renderText({
+    if (!is.null(rv$last_update)) {
+      paste("Updated:", format(rv$last_update, "%b %d, %Y %H:%M:%S"))
+    } else {
+      "Not loaded"
+    }
+  })
+
+  # Filtered tracks data based on date range and tag
+  filtered_tracks <- reactive({
+    req(rv$play_reports_data)
+
+    data <- rv$play_reports_data %>%
+      mutate(date = as.Date(started)) %>%
+      filter(date >= input$tracks_date_range[1] & date <= input$tracks_date_range[2])
+
+    # Apply tag filter
+    if (input$track_tag_filter != "all") {
+      data <- data %>%
+        filter(grepl(input$track_tag_filter, trackTags, fixed = TRUE))
+    }
+
+    data
+  })
+
+  # Aggregate track statistics
+  track_stats <- reactive({
+    req(filtered_tracks())
+
+    filtered_tracks() %>%
+      group_by(trackTitle, trackSlug, trackTags) %>%
+      summarise(
+        plays = n(),
+        total_hours = sum(hoursConsumed, na.rm = TRUE),
+        avg_hours_per_play = mean(hoursConsumed, na.rm = TRUE),
+        avg_completion = mean(completionPercent, na.rm = TRUE),
+        completed_plays = sum(completionPercent >= 100),
+        completion_rate = (sum(completionPercent >= 100) / n()) * 100,
+        unique_users = n_distinct(userEmail),
+        .groups = "drop"
+      ) %>%
+      arrange(desc(total_hours))
+  })
+
+  # Total tracks value
+  output$total_tracks_value <- renderText({
+    req(track_stats())
+    nrow(track_stats())
+  })
+
+  # Total plays value
+  output$total_plays_value <- renderText({
+    req(track_stats())
+    sum(track_stats()$plays)
+  })
+
+  # Tracks table
+  output$tracks_table <- DT::renderDataTable({
+    req(track_stats())
+
+    track_stats() %>%
+      mutate(
+        total_hours = sprintf("%.2f", total_hours),
+        avg_hours_per_play = sprintf("%.2f", avg_hours_per_play)
+      ) %>%
+      select(
+        Track = trackTitle,
+        Tags = trackTags,
+        Plays = plays,
+        `Total Hours` = total_hours,
+        `Avg Hours/Play` = avg_hours_per_play
+      )
+  }, options = list(
+    pageLength = 25,
+    order = list(list(3, 'desc')),  # Sort by Total Hours descending
+    scrollX = TRUE,
+    autoWidth = TRUE
+  ))
 }
 
 # Run the application
