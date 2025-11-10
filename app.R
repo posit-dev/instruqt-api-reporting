@@ -1,8 +1,8 @@
 # Instruqt Hours Reporting
-# A simple Shiny dashboard for tracking Instruqt infrastructure hours consumed
+# A modern Shiny dashboard for tracking Instruqt infrastructure hours consumed
 
 library(shiny)
-library(shinydashboard)
+library(bslib)
 library(plotly)
 library(dplyr)
 library(lubridate)
@@ -23,60 +23,85 @@ cat("API key set:", Sys.getenv("INSTRUQT_API_KEY") != "", "\n\n")
 source("instruqt_api.R")
 
 # UI Definition
-ui <- dashboardPage(
-  skin = "blue",
-
-  # Header
-  dashboardHeader(title = "Instruqt Hours"),
+ui <- page_sidebar(
+  title = "Instruqt Hours Reporting",
+  theme = bs_theme(
+    version = 5,
+    preset = "shiny",
+    primary = "#0d6efd",
+    bg = "#ffffff",
+    fg = "#212529"
+  ),
 
   # Sidebar
-  dashboardSidebar(
-    div(style = "padding: 15px;",
-        h4("Date Range"),
-        dateRangeInput(
-          "date_range",
-          NULL,
-          start = "2025-05-10",
-          end = Sys.Date()
-        ),
-        br(),
-        actionButton(
-          "refresh_data",
-          "Refresh Data",
-          icon = icon("refresh"),
-          width = "100%",
-          class = "btn-primary"
-        ),
-        br(),
-        br(),
-        textOutput("last_updated")
+  sidebar = sidebar(
+    title = "Filters",
+    width = 280,
+
+    dateRangeInput(
+      "date_range",
+      "Date Range:",
+      start = "2025-05-10",
+      end = Sys.Date(),
+      width = "100%"
+    ),
+
+    actionButton(
+      "refresh_data",
+      "Refresh Data",
+      icon = icon("refresh"),
+      width = "100%",
+      class = "btn-primary mt-3"
+    ),
+
+    hr(),
+
+    div(
+      class = "text-muted small",
+      textOutput("last_updated")
     )
   ),
 
-  # Body
-  dashboardBody(
-    tags$head(
-      tags$style(HTML("
-        .small-box h3 { font-size: 48px; font-weight: bold; }
-        .small-box p { font-size: 16px; }
-        .content-wrapper { background-color: #f4f6f9; }
-      "))
+  # Custom CSS to ensure all value boxes are the same height
+  tags$head(
+    tags$style(HTML("
+      .bslib-value-box {
+        height: 150px !important;
+        min-height: 150px !important;
+        max-height: 150px !important;
+      }
+    "))
+  ),
+
+  # Main content
+  layout_columns(
+    col_widths = c(4, 4, 4),
+
+    value_box(
+      title = "Hours Consumed (Selected Range)",
+      value = textOutput("total_hours_value"),
+      showcase = icon("calendar-days"),
+      theme = "primary",
+      height = "150px"
     ),
 
-    fluidRow(
-      valueBoxOutput("total_hours_box", width = 6),
-      valueBoxOutput("license_total_hours_box", width = 6)
+    value_box(
+      title = "Total Since License Start",
+      value = textOutput("license_total_hours_value"),
+      showcase = icon("clock"),
+      theme = "info",
+      height = "150px"
     ),
 
-    fluidRow(
-      box(
-        title = "Hours Consumed Over Time",
-        status = "primary",
-        solidHeader = TRUE,
-        width = 12,
-        plotlyOutput("hours_timeline", height = "400px")
-      )
-    )
+    uiOutput("license_usage_box")
+  ),
+
+  card(
+    card_header("Hours Consumed Over Time"),
+    card_body(
+      plotlyOutput("hours_timeline", height = "450px")
+    ),
+    full_screen = TRUE
   )
 )
 
@@ -142,31 +167,72 @@ server <- function(input, output, session) {
     }
   })
 
-  # Total hours value box (for selected date range)
-  output$total_hours_box <- renderValueBox({
+  # Total hours value (for selected date range)
+  output$total_hours_value <- renderText({
     req(rv$consumption_data)
 
     total_hours <- sum(rv$consumption_data$sandboxHours, na.rm = TRUE)
-
-    valueBox(
-      value = sprintf("%.1f", total_hours),
-      subtitle = "Hours Consumed (Selected Range)",
-      icon = icon("calendar"),
-      color = "blue"
-    )
+    sprintf("%.1f hrs", total_hours)
   })
 
-  # License total hours value box (since May 10, 2025)
-  output$license_total_hours_box <- renderValueBox({
+  # License total hours value (since May 10, 2025)
+  output$license_total_hours_value <- renderText({
     req(rv$license_total_data)
 
     total_hours <- sum(rv$license_total_data$sandboxHours, na.rm = TRUE)
+    sprintf("%.1f hrs", total_hours)
+  })
 
-    valueBox(
-      value = sprintf("%.1f", total_hours),
-      subtitle = "Total Hours Since License Start (May 10, 2025)",
-      icon = icon("clock"),
-      color = "green"
+  # License usage percentage value
+  output$license_usage_value <- renderText({
+    req(rv$license_total_data)
+
+    LICENSE_LIMIT <- 1000
+    total_hours <- sum(rv$license_total_data$sandboxHours, na.rm = TRUE)
+    usage_percent <- (total_hours / LICENSE_LIMIT) * 100
+    sprintf("%.1f%%", usage_percent)
+  })
+
+  # License usage percentage box with dynamic color
+  output$license_usage_box <- renderUI({
+    req(rv$license_total_data)
+
+    LICENSE_LIMIT <- 1000
+    total_hours <- sum(rv$license_total_data$sandboxHours, na.rm = TRUE)
+    usage_percent <- (total_hours / LICENSE_LIMIT) * 100
+
+    # Determine theme color based on usage percentage
+    # 0-70%: success (green)
+    # 70-90%: warning (yellow/orange)
+    # 90-100%: danger (orange/red)
+    # >100%: danger (red)
+    theme_color <- if (usage_percent <= 70) {
+      "success"
+    } else if (usage_percent <= 90) {
+      "warning"
+    } else {
+      "danger"
+    }
+
+    # Create custom CSS for gradient effect if over 100%
+    custom_bg <- if (usage_percent > 100) {
+      "background: linear-gradient(135deg, #dc3545 0%, #c82333 100%) !important;"
+    } else {
+      ""
+    }
+
+    div(
+      style = "height: 150px;",
+      value_box(
+        title = "License Usage",
+        value = sprintf("%.1f%%", usage_percent),
+        showcase = icon("gauge-high"),
+        theme = theme_color,
+        height = "150px",
+        max_height = "150px",
+        min_height = "150px",
+        tags$style(HTML(sprintf(".bg-%s { %s }", theme_color, custom_bg)))
+      )
     )
   })
 
