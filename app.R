@@ -200,9 +200,18 @@ server <- function(input, output, session) {
 
   # Load data on startup and when refresh is clicked
   observeEvent(c(input$refresh_data, TRUE), {
-    withProgress(message = 'Loading data...', {
+    # Show loading notification with spinner
+    loading_id <- showNotification(
+      ui = tagList(
+        icon("spinner", class = "fa-spin"),
+        " Loading data..."
+      ),
+      duration = NULL,
+      closeButton = FALSE,
+      type = "message"
+    )
 
-      cat("\n[APP] Fetching consumption data...\n")
+    cat("\n[APP] Fetching consumption data...\n")
 
       # Convert date range to ISO 8601 format
       start_iso <- format(as.POSIXct(input$date_range[1]), "%Y-%m-%dT00:00:00Z")
@@ -247,10 +256,13 @@ server <- function(input, output, session) {
 
       rv$last_update <- Sys.time()
 
+      # Remove loading notification
+      removeNotification(loading_id)
+
+      # Show success notification
       if (!is.null(rv$consumption_data)) {
-        showNotification("Data loaded successfully!", type = "message")
+        showNotification("Data loaded successfully!", type = "message", duration = 3)
       }
-    })
   }, ignoreNULL = FALSE, once = FALSE)
 
   # Last updated text
