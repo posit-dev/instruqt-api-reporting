@@ -136,14 +136,6 @@ ui <- page_navbar(
           width = "100%"
         ),
 
-        radioButtons(
-          "play_type",
-          "Play Type:",
-          choices = c("All" = "ALL", "Normal" = "NORMAL", "Developer" = "DEVELOPER"),
-          selected = "ALL",
-          width = "100%"
-        ),
-
         actionButton(
           "refresh_data",
           "Refresh Data",
@@ -189,13 +181,21 @@ ui <- page_navbar(
 
     # Row 1b: Additional value boxes (second row)
     layout_columns(
-      col_widths = c(6, 6),
+      col_widths = c(4, 4, 4),
 
       value_box(
         title = "Total Active Time (Selected Range)",
         value = textOutput("total_active_hours_value"),
         showcase = icon("play-circle"),
         theme = "success",
+        height = "95px"
+      ),
+
+      value_box(
+        title = "Developer Hours (Selected Range)",
+        value = textOutput("developer_hours_value"),
+        showcase = icon("code"),
+        theme = "warning",
         height = "95px"
       ),
 
@@ -319,6 +319,7 @@ server <- function(input, output, session) {
   # Reactive values (shared between both pages)
   rv <- reactiveValues(
     consumption_data = NULL,
+    developer_consumption_data = NULL,
     license_total_data = NULL,
     play_reports_data = NULL,
     last_update = NULL
@@ -344,7 +345,7 @@ server <- function(input, output, session) {
       end_iso <- format(as.POSIXct(input$date_range[2]), "%Y-%m-%dT23:59:59Z")
 
       rv$consumption_data <- tryCatch({
-        result <- get_consumption_details(start_iso, end_iso, play_type = input$play_type)
+        result <- get_consumption_details(start_iso, end_iso, play_type = "ALL")
         cat("[APP] Successfully loaded consumption data\n")
         result
       }, error = function(e) {
@@ -354,12 +355,24 @@ server <- function(input, output, session) {
         NULL
       })
 
+      # Fetch developer hours for the selected date range
+      cat("\n[APP] Fetching developer consumption data...\n")
+      rv$developer_consumption_data <- tryCatch({
+        result <- get_consumption_details(start_iso, end_iso, play_type = "DEVELOPER")
+        cat("[APP] Successfully loaded developer consumption data\n")
+        result
+      }, error = function(e) {
+        cat("[APP] ERROR loading developer consumption data:\n")
+        cat("  Message:", e$message, "\n")
+        NULL
+      })
+
       # Always fetch total since license start (May 10, 2025)
       cat("\n[APP] Fetching license total consumption data...\n")
       rv$license_total_data <- tryCatch({
         license_start <- "2025-05-10T00:00:00Z"
         today <- format(Sys.Date(), "%Y-%m-%dT23:59:59Z")
-        result <- get_consumption_details(license_start, today, play_type = input$play_type)
+        result <- get_consumption_details(license_start, today, play_type = "ALL")
         cat("[APP] Successfully loaded license total data\n")
         result
       }, error = function(e) {
@@ -443,6 +456,14 @@ server <- function(input, output, session) {
       sum(na.rm = TRUE)
 
     sprintf("%.1f hrs", total_active)
+  })
+
+  # Developer hours value (for selected date range)
+  output$developer_hours_value <- renderText({
+    req(rv$developer_consumption_data)
+
+    total_dev_hours <- sum(rv$developer_consumption_data$sandboxHours, na.rm = TRUE)
+    sprintf("%.1f hrs", total_dev_hours)
   })
 
   # Total overhead hours value (for selected date range)
@@ -565,6 +586,13 @@ server <- function(input, output, session) {
         pull(sandboxHours) %>%
         sum(na.rm = TRUE)
 
+      # Get developer hours from developer consumption data
+      developer_hours <- rv$developer_consumption_data %>%
+        mutate(date = as.Date(date)) %>%
+        filter(date == clicked_date) %>%
+        pull(sandboxHours) %>%
+        sum(na.rm = TRUE)
+
       track_data <- rv$play_reports_data %>%
         mutate(date = as.Date(started)) %>%
         filter(date == clicked_date) %>%
@@ -590,6 +618,13 @@ server <- function(input, output, session) {
         pull(sandboxHours) %>%
         sum(na.rm = TRUE)
 
+      # Get developer hours from developer consumption data for the week
+      developer_hours <- rv$developer_consumption_data %>%
+        mutate(date = as.Date(date), week = floor_date(date, "week")) %>%
+        filter(week == clicked_week) %>%
+        pull(sandboxHours) %>%
+        sum(na.rm = TRUE)
+
       track_data <- rv$play_reports_data %>%
         mutate(date = as.Date(started), week = floor_date(date, "week")) %>%
         filter(week == clicked_week) %>%
@@ -610,6 +645,13 @@ server <- function(input, output, session) {
 
       # Get sandbox hours from consumption data for the month
       sandbox_hours <- rv$consumption_data %>%
+        mutate(date = as.Date(date), month = floor_date(date, "month")) %>%
+        filter(month == clicked_month) %>%
+        pull(sandboxHours) %>%
+        sum(na.rm = TRUE)
+
+      # Get developer hours from developer consumption data for the month
+      developer_hours <- rv$developer_consumption_data %>%
         mutate(date = as.Date(date), month = floor_date(date, "month")) %>%
         filter(month == clicked_month) %>%
         pull(sandboxHours) %>%
@@ -647,8 +689,8 @@ server <- function(input, output, session) {
       )
     }
 
-    # Calculate overhead
-    overhead_hours <- sandbox_hours - total_track_hours
+    # Calculate overhead (total minus active and developer time)
+    overhead_hours <- sandbox_hours - total_track_hours - developer_hours
 
     card(
       card_header(title),
@@ -658,7 +700,7 @@ server <- function(input, output, session) {
           class = "mb-3 p-3",
           style = "background-color: #f8f9fa; border-radius: 5px;",
           layout_columns(
-            col_widths = c(4, 4, 4),
+            col_widths = c(3, 3, 3, 3),
             div(
               strong("Total Compute Hours:"),
               br(),
@@ -670,6 +712,11 @@ server <- function(input, output, session) {
               sprintf("%.2f hrs", total_track_hours),
               br(),
               span(class = "text-muted small", "(Active track play time)")
+            ),
+            div(
+              strong("Total Developer Time:"),
+              br(),
+              sprintf("%.2f hrs", developer_hours)
             ),
             div(
               strong("Overhead Time:"),
@@ -768,10 +815,8 @@ server <- function(input, output, session) {
   # Aggregate track statistics
   track_stats <- reactive({
     req(filtered_tracks())
-    req(rv$consumption_data)
 
-    # Calculate active hours per track
-    track_active <- filtered_tracks() %>%
+    filtered_tracks() %>%
       group_by(trackTitle, trackSlug, trackTags) %>%
       summarise(
         plays = n(),
@@ -782,35 +827,8 @@ server <- function(input, output, session) {
         completion_rate = (sum(completionPercent >= 100) / n()) * 100,
         unique_users = n_distinct(userEmail),
         .groups = "drop"
-      )
-
-    # Calculate total consumption hours for the date range
-    start_date <- input$tracks_date_range[1]
-    end_date <- input$tracks_date_range[2]
-
-    total_consumption <- rv$consumption_data %>%
-      mutate(date = as.Date(date)) %>%
-      filter(date >= start_date & date <= end_date) %>%
-      pull(sandboxHours) %>%
-      sum(na.rm = TRUE)
-
-    # Calculate total active hours across all tracks
-    total_active <- sum(track_active$active_hours, na.rm = TRUE)
-
-    # Calculate overhead proportion
-    overhead_ratio <- if (total_active > 0) {
-      (total_consumption - total_active) / total_active
-    } else {
-      0
-    }
-
-    # Add proportional overhead to each track
-    track_active %>%
-      mutate(
-        overhead_hours = active_hours * overhead_ratio,
-        total_hours = active_hours + overhead_hours
       ) %>%
-      arrange(desc(total_hours))
+      arrange(desc(active_hours))
   })
 
   # Total tracks value
@@ -833,24 +851,22 @@ server <- function(input, output, session) {
       select(
         Track = trackTitle,
         Tags = trackTags,
-        `Total Hours` = total_hours,
         `Active Hours` = active_hours,
-        `Overhead Hours` = overhead_hours,
         Plays = plays,
         `Avg Hours/Play` = avg_hours_per_play
       ) %>%
       DT::datatable(
         options = list(
           pageLength = 25,
-          order = list(list(3, 'desc')),  # Sort by Total Hours descending (1-indexed: Track=1, Tags=2, Total Hours=3)
+          order = list(list(3, 'desc')),  # Sort by Active Hours descending (1-indexed: Track=1, Tags=2, Active Hours=3)
           scrollX = TRUE,
           autoWidth = TRUE,
           columnDefs = list(
-            list(targets = c(3, 4, 5, 7), className = 'dt-right')  # Right-align numeric columns (excluding Plays at index 6)
+            list(targets = c(3, 5), className = 'dt-right')  # Right-align numeric columns (Active Hours=3, Avg Hours/Play=5)
           )
         )
       ) %>%
-      DT::formatRound(columns = c('Total Hours', 'Active Hours', 'Overhead Hours', 'Avg Hours/Play'), digits = 2)
+      DT::formatRound(columns = c('Active Hours', 'Avg Hours/Play'), digits = 2)
   })
 }
 
