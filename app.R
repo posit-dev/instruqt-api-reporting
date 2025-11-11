@@ -37,9 +37,21 @@ ui <- page_navbar(
   header = tags$head(
     tags$style(HTML("
       .bslib-value-box {
-        height: 120px !important;
-        min-height: 120px !important;
-        max-height: 120px !important;
+        height: 95px !important;
+        min-height: 95px !important;
+        max-height: 95px !important;
+      }
+      .bslib-value-box .value-box-title {
+        font-size: 0.85rem !important;
+      }
+      .bslib-value-box .value-box-value {
+        font-size: 1.25rem !important;
+      }
+      .bslib-value-box .value-box-showcase {
+        font-size: 1.5rem !important;
+      }
+      .bslib-value-box .value-box-showcase i {
+        font-size: 1.5rem !important;
       }
       /* Fix card width and remove scrollbars */
       .bslib-card {
@@ -66,15 +78,18 @@ ui <- page_navbar(
       /* Fixed layout container */
       .main-content-grid {
         display: grid;
-        grid-template-rows: auto auto auto;
+        grid-template-rows: auto auto auto auto;
         row-gap: 0rem;
         padding: 0rem;
         padding-bottom: 2rem;
       }
       .main-content-grid > :nth-child(2) {
-        margin-top: 0.5rem;
+        margin-top: 0rem;
       }
       .main-content-grid > :nth-child(3) {
+        margin-top: 0rem;
+      }
+      .main-content-grid > :nth-child(4) {
         margin-top: 2rem;
       }
       .plot-card-container {
@@ -121,6 +136,14 @@ ui <- page_navbar(
           width = "100%"
         ),
 
+        radioButtons(
+          "play_type",
+          "Play Type:",
+          choices = c("All" = "ALL", "Normal" = "NORMAL", "Developer" = "DEVELOPER"),
+          selected = "ALL",
+          width = "100%"
+        ),
+
         actionButton(
           "refresh_data",
           "Refresh Data",
@@ -141,7 +164,7 @@ ui <- page_navbar(
       div(
     class = "main-content-grid",
 
-    # Row 1: Value boxes
+    # Row 1: Value boxes (first row)
     layout_columns(
       col_widths = c(4, 4, 4),
 
@@ -150,7 +173,7 @@ ui <- page_navbar(
         value = textOutput("total_hours_value"),
         showcase = icon("calendar-days"),
         theme = "primary",
-        height = "120px"
+        height = "95px"
       ),
 
       value_box(
@@ -158,10 +181,31 @@ ui <- page_navbar(
         value = textOutput("license_total_hours_value"),
         showcase = icon("clock"),
         theme = "info",
-        height = "120px"
+        height = "95px"
       ),
 
       uiOutput("license_usage_box")
+    ),
+
+    # Row 1b: Additional value boxes (second row)
+    layout_columns(
+      col_widths = c(6, 6),
+
+      value_box(
+        title = "Total Active Time (Selected Range)",
+        value = textOutput("total_active_hours_value"),
+        showcase = icon("play-circle"),
+        theme = "success",
+        height = "95px"
+      ),
+
+      value_box(
+        title = "Overhead Time (Selected Range)",
+        value = textOutput("total_overhead_hours_value"),
+        showcase = icon("server"),
+        theme = "secondary",
+        height = "95px"
+      )
     ),
 
     # Row 2: Plot card
@@ -246,7 +290,7 @@ ui <- page_navbar(
             value = textOutput("total_tracks_value"),
             showcase = icon("list"),
             theme = "primary",
-            height = "120px"
+            height = "95px"
           ),
 
           value_box(
@@ -254,7 +298,7 @@ ui <- page_navbar(
             value = textOutput("total_plays_value"),
             showcase = icon("play"),
             theme = "info",
-            height = "120px"
+            height = "95px"
           )
         ),
 
@@ -300,7 +344,7 @@ server <- function(input, output, session) {
       end_iso <- format(as.POSIXct(input$date_range[2]), "%Y-%m-%dT23:59:59Z")
 
       rv$consumption_data <- tryCatch({
-        result <- get_consumption_details(start_iso, end_iso, play_type = "ALL")
+        result <- get_consumption_details(start_iso, end_iso, play_type = input$play_type)
         cat("[APP] Successfully loaded consumption data\n")
         result
       }, error = function(e) {
@@ -315,7 +359,7 @@ server <- function(input, output, session) {
       rv$license_total_data <- tryCatch({
         license_start <- "2025-05-10T00:00:00Z"
         today <- format(Sys.Date(), "%Y-%m-%dT23:59:59Z")
-        result <- get_consumption_details(license_start, today, play_type = "ALL")
+        result <- get_consumption_details(license_start, today, play_type = input$play_type)
         cat("[APP] Successfully loaded license total data\n")
         result
       }, error = function(e) {
@@ -383,6 +427,47 @@ server <- function(input, output, session) {
     sprintf("%.1f hrs", total_hours)
   })
 
+  # Total active hours value (for selected date range)
+  output$total_active_hours_value <- renderText({
+    req(rv$play_reports_data)
+    req(rv$consumption_data)
+
+    # Filter play reports to selected date range
+    start_date <- input$date_range[1]
+    end_date <- input$date_range[2]
+
+    total_active <- rv$play_reports_data %>%
+      mutate(date = as.Date(started)) %>%
+      filter(date >= start_date & date <= end_date) %>%
+      pull(hoursConsumed) %>%
+      sum(na.rm = TRUE)
+
+    sprintf("%.1f hrs", total_active)
+  })
+
+  # Total overhead hours value (for selected date range)
+  output$total_overhead_hours_value <- renderText({
+    req(rv$play_reports_data)
+    req(rv$consumption_data)
+
+    # Total consumption hours
+    total_consumption <- sum(rv$consumption_data$sandboxHours, na.rm = TRUE)
+
+    # Filter play reports to selected date range
+    start_date <- input$date_range[1]
+    end_date <- input$date_range[2]
+
+    total_active <- rv$play_reports_data %>%
+      mutate(date = as.Date(started)) %>%
+      filter(date >= start_date & date <= end_date) %>%
+      pull(hoursConsumed) %>%
+      sum(na.rm = TRUE)
+
+    overhead <- total_consumption - total_active
+
+    sprintf("%.1f hrs", overhead)
+  })
+
   # License usage percentage value
   output$license_usage_value <- renderText({
     req(rv$license_total_data)
@@ -422,15 +507,15 @@ server <- function(input, output, session) {
     }
 
     div(
-      style = "height: 120px;",
+      style = "height: 95px;",
       value_box(
         title = "License Usage",
         value = sprintf("%.1f%%", usage_percent),
         showcase = icon("gauge-high"),
         theme = theme_color,
-        height = "120px",
-        max_height = "120px",
-        min_height = "120px",
+        height = "95px",
+        max_height = "95px",
+        min_height = "95px",
         tags$style(HTML(sprintf(".bg-%s { %s }", theme_color, custom_bg)))
       )
     )
@@ -459,6 +544,7 @@ server <- function(input, output, session) {
   # Unified track breakdown card that shows below the chart
   output$track_breakdown_card <- renderUI({
     req(rv$play_reports_data)
+    req(rv$consumption_data)
 
     # Get click data from all sources
     click_data_daily <- event_data("plotly_click", source = "daily_plot")
@@ -471,6 +557,13 @@ server <- function(input, output, session) {
     # Process based on active tab and corresponding click data
     if (active_tab == "Daily" && !is.null(click_data_daily)) {
       clicked_date <- as.Date(click_data_daily$x)
+
+      # Get sandbox hours from consumption data
+      sandbox_hours <- rv$consumption_data %>%
+        mutate(date = as.Date(date)) %>%
+        filter(date == clicked_date) %>%
+        pull(sandboxHours) %>%
+        sum(na.rm = TRUE)
 
       track_data <- rv$play_reports_data %>%
         mutate(date = as.Date(started)) %>%
@@ -485,9 +578,17 @@ server <- function(input, output, session) {
         arrange(desc(hours))
 
       title <- paste("Track Breakdown for", format(clicked_date, "%B %d, %Y"))
+      total_track_hours <- sum(track_data$hours, na.rm = TRUE)
 
     } else if (active_tab == "Weekly" && !is.null(click_data_weekly)) {
       clicked_week <- as.Date(click_data_weekly$x)
+
+      # Get sandbox hours from consumption data for the week
+      sandbox_hours <- rv$consumption_data %>%
+        mutate(date = as.Date(date), week = floor_date(date, "week")) %>%
+        filter(week == clicked_week) %>%
+        pull(sandboxHours) %>%
+        sum(na.rm = TRUE)
 
       track_data <- rv$play_reports_data %>%
         mutate(date = as.Date(started), week = floor_date(date, "week")) %>%
@@ -502,9 +603,17 @@ server <- function(input, output, session) {
         arrange(desc(hours))
 
       title <- paste("Track Breakdown for Week of", format(clicked_week, "%B %d, %Y"))
+      total_track_hours <- sum(track_data$hours, na.rm = TRUE)
 
     } else if (active_tab == "Monthly" && !is.null(click_data_monthly)) {
       clicked_month <- as.Date(click_data_monthly$x)
+
+      # Get sandbox hours from consumption data for the month
+      sandbox_hours <- rv$consumption_data %>%
+        mutate(date = as.Date(date), month = floor_date(date, "month")) %>%
+        filter(month == clicked_month) %>%
+        pull(sandboxHours) %>%
+        sum(na.rm = TRUE)
 
       track_data <- rv$play_reports_data %>%
         mutate(date = as.Date(started), month = floor_date(date, "month")) %>%
@@ -519,6 +628,7 @@ server <- function(input, output, session) {
         arrange(desc(hours))
 
       title <- paste("Track Breakdown for", format(clicked_month, "%B %Y"))
+      total_track_hours <- sum(track_data$hours, na.rm = TRUE)
 
     } else {
       # No bar clicked yet or wrong tab active
@@ -537,9 +647,41 @@ server <- function(input, output, session) {
       )
     }
 
+    # Calculate overhead
+    overhead_hours <- sandbox_hours - total_track_hours
+
     card(
       card_header(title),
       card_body(
+        # Summary section
+        div(
+          class = "mb-3 p-3",
+          style = "background-color: #f8f9fa; border-radius: 5px;",
+          layout_columns(
+            col_widths = c(4, 4, 4),
+            div(
+              strong("Total Compute Hours:"),
+              br(),
+              sprintf("%.2f hrs", sandbox_hours)
+            ),
+            div(
+              strong("Total Active Time:"),
+              br(),
+              sprintf("%.2f hrs", total_track_hours),
+              br(),
+              span(class = "text-muted small", "(Active track play time)")
+            ),
+            div(
+              strong("Overhead Time:"),
+              br(),
+              sprintf("%.2f hrs", overhead_hours),
+              br(),
+              span(class = "text-muted small", "(startup, idle, etc.)")
+            )
+          )
+        ),
+        # Track breakdown table
+        h5("Track Details"),
         renderTable({
           track_data %>%
             mutate(hours = sprintf("%.2f", hours)) %>%
@@ -626,18 +768,47 @@ server <- function(input, output, session) {
   # Aggregate track statistics
   track_stats <- reactive({
     req(filtered_tracks())
+    req(rv$consumption_data)
 
-    filtered_tracks() %>%
+    # Calculate active hours per track
+    track_active <- filtered_tracks() %>%
       group_by(trackTitle, trackSlug, trackTags) %>%
       summarise(
         plays = n(),
-        total_hours = sum(hoursConsumed, na.rm = TRUE),
+        active_hours = sum(hoursConsumed, na.rm = TRUE),
         avg_hours_per_play = mean(hoursConsumed, na.rm = TRUE),
         avg_completion = mean(completionPercent, na.rm = TRUE),
         completed_plays = sum(completionPercent >= 100),
         completion_rate = (sum(completionPercent >= 100) / n()) * 100,
         unique_users = n_distinct(userEmail),
         .groups = "drop"
+      )
+
+    # Calculate total consumption hours for the date range
+    start_date <- input$tracks_date_range[1]
+    end_date <- input$tracks_date_range[2]
+
+    total_consumption <- rv$consumption_data %>%
+      mutate(date = as.Date(date)) %>%
+      filter(date >= start_date & date <= end_date) %>%
+      pull(sandboxHours) %>%
+      sum(na.rm = TRUE)
+
+    # Calculate total active hours across all tracks
+    total_active <- sum(track_active$active_hours, na.rm = TRUE)
+
+    # Calculate overhead proportion
+    overhead_ratio <- if (total_active > 0) {
+      (total_consumption - total_active) / total_active
+    } else {
+      0
+    }
+
+    # Add proportional overhead to each track
+    track_active %>%
+      mutate(
+        overhead_hours = active_hours * overhead_ratio,
+        total_hours = active_hours + overhead_hours
       ) %>%
       arrange(desc(total_hours))
   })
@@ -659,23 +830,28 @@ server <- function(input, output, session) {
     req(track_stats())
 
     track_stats() %>%
-      mutate(
-        total_hours = sprintf("%.2f", total_hours),
-        avg_hours_per_play = sprintf("%.2f", avg_hours_per_play)
-      ) %>%
       select(
         Track = trackTitle,
         Tags = trackTags,
-        Plays = plays,
         `Total Hours` = total_hours,
+        `Active Hours` = active_hours,
+        `Overhead Hours` = overhead_hours,
+        Plays = plays,
         `Avg Hours/Play` = avg_hours_per_play
-      )
-  }, options = list(
-    pageLength = 25,
-    order = list(list(3, 'desc')),  # Sort by Total Hours descending
-    scrollX = TRUE,
-    autoWidth = TRUE
-  ))
+      ) %>%
+      DT::datatable(
+        options = list(
+          pageLength = 25,
+          order = list(list(3, 'desc')),  # Sort by Total Hours descending (1-indexed: Track=1, Tags=2, Total Hours=3)
+          scrollX = TRUE,
+          autoWidth = TRUE,
+          columnDefs = list(
+            list(targets = c(3, 4, 5, 7), className = 'dt-right')  # Right-align numeric columns (excluding Plays at index 6)
+          )
+        )
+      ) %>%
+      DT::formatRound(columns = c('Total Hours', 'Active Hours', 'Overhead Hours', 'Avg Hours/Play'), digits = 2)
+  })
 }
 
 # Run the application
