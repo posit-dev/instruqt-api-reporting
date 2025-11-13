@@ -322,6 +322,7 @@ server <- function(input, output, session) {
     developer_consumption_data = NULL,
     license_total_data = NULL,
     play_reports_data = NULL,
+    tracks_data = NULL,
     last_update = NULL
   )
 
@@ -386,10 +387,22 @@ server <- function(input, output, session) {
       rv$play_reports_data <- tryCatch({
         result <- get_all_play_reports(max_records = 5000, page_size = 100)
         cat("[APP] Successfully loaded play reports\n")
+        result
+      }, error = function(e) {
+        cat("[APP] ERROR loading play reports:\n")
+        cat("  Message:", e$message, "\n")
+        NULL
+      })
 
-        # Update tag filter choices for Tracks page
+      # Fetch current tracks list
+      cat("\n[APP] Fetching tracks list...\n")
+      rv$tracks_data <- tryCatch({
+        result <- get_all_tracks()
+        cat("[APP] Successfully loaded tracks list\n")
+
+        # Update tag filter choices for Tracks page based on active tracks
         if (!is.null(result) && nrow(result) > 0) {
-          all_tags <- unique(unlist(strsplit(result$trackTags, ", ")))
+          all_tags <- unique(unlist(strsplit(result$tags, ", ")))
           all_tags <- all_tags[all_tags != ""]
           all_tags <- sort(all_tags)
 
@@ -399,7 +412,7 @@ server <- function(input, output, session) {
 
         result
       }, error = function(e) {
-        cat("[APP] ERROR loading play reports:\n")
+        cat("[APP] ERROR loading tracks list:\n")
         cat("  Message:", e$message, "\n")
         NULL
       })
@@ -798,8 +811,14 @@ server <- function(input, output, session) {
   # Filtered tracks data based on date range and tag
   filtered_tracks <- reactive({
     req(rv$play_reports_data)
+    req(rv$tracks_data)
 
+    # Get list of active track IDs
+    active_track_ids <- rv$tracks_data$id
+
+    # Filter play reports to only include active tracks and date range
     data <- rv$play_reports_data %>%
+      filter(trackId %in% active_track_ids) %>%
       mutate(date = as.Date(started)) %>%
       filter(date >= input$tracks_date_range[1] & date <= input$tracks_date_range[2])
 
@@ -814,9 +833,24 @@ server <- function(input, output, session) {
 
   # Aggregate track statistics
   track_stats <- reactive({
-    req(filtered_tracks())
+    req(rv$tracks_data)
+    req(rv$play_reports_data)
 
-    filtered_tracks() %>%
+    # Start with all active tracks
+    all_tracks <- rv$tracks_data %>%
+      select(trackTitle = title, trackSlug = slug, trackTags = tags, trackId = id)
+
+    # Apply tag filter to the base tracks list
+    if (input$track_tag_filter != "all") {
+      all_tracks <- all_tracks %>%
+        filter(grepl(input$track_tag_filter, trackTags, fixed = TRUE))
+    }
+
+    # Get filtered play reports for the date range
+    play_stats <- rv$play_reports_data %>%
+      filter(trackId %in% rv$tracks_data$id) %>%
+      mutate(date = as.Date(started)) %>%
+      filter(date >= input$tracks_date_range[1] & date <= input$tracks_date_range[2]) %>%
       group_by(trackTitle, trackSlug, trackTags) %>%
       summarise(
         plays = n(),
@@ -827,8 +861,24 @@ server <- function(input, output, session) {
         completion_rate = (sum(completionPercent >= 100) / n()) * 100,
         unique_users = n_distinct(userEmail),
         .groups = "drop"
+      )
+
+    # Left join to include all tracks, even those with no plays
+    result <- all_tracks %>%
+      left_join(play_stats, by = c("trackTitle", "trackSlug", "trackTags")) %>%
+      mutate(
+        plays = ifelse(is.na(plays), 0, plays),
+        active_hours = ifelse(is.na(active_hours), 0, active_hours),
+        avg_hours_per_play = ifelse(is.na(avg_hours_per_play), 0, avg_hours_per_play),
+        avg_completion = ifelse(is.na(avg_completion), 0, avg_completion),
+        completed_plays = ifelse(is.na(completed_plays), 0, completed_plays),
+        completion_rate = ifelse(is.na(completion_rate), 0, completion_rate),
+        unique_users = ifelse(is.na(unique_users), 0, unique_users)
       ) %>%
+      select(-trackId) %>%
       arrange(desc(active_hours))
+
+    result
   })
 
   # Total tracks value

@@ -285,3 +285,113 @@ get_all_play_reports <- function(max_records = 1000, page_size = 100) {
 
   return(df)
 }
+
+#' Get All Tracks with Metadata
+#'
+#' @param team_slug Team slug (defaults to INSTRUQT_TEAM_SLUG env var)
+#' @return Data frame with track metadata including owner, created/modified dates, and description
+get_all_tracks <- function(team_slug = Sys.getenv("INSTRUQT_TEAM_SLUG")) {
+  log_info("Fetching all tracks for team: ", team_slug)
+
+  query <- '
+    query GetTracks($teamSlug: String!) {
+      team(teamSlug: $teamSlug) {
+        tracks {
+          id
+          slug
+          title
+          description
+          status
+          owner
+          created
+          createdAt
+          last_update
+          updated_by {
+            profile {
+              email
+            }
+          }
+          developers {
+            profile {
+              email
+            }
+          }
+          tags
+        }
+      }
+    }
+  '
+
+  variables <- list(
+    teamSlug = team_slug
+  )
+
+  result <- execute_graphql_query(query, variables)
+
+  if (is.null(result$team$tracks) || length(result$team$tracks) == 0) {
+    log_error("No tracks returned")
+    return(data.frame())
+  }
+
+  tracks <- result$team$tracks
+
+  # Extract updated_by information
+  updated_by_emails <- sapply(tracks$updated_by, function(x) {
+    if (is.null(x) || is.null(x$profile) || is.null(x$profile$email)) return("")
+    x$profile$email
+  })
+
+  # Extract developers information (team access)
+  developers_list <- sapply(tracks$developers, function(devs) {
+    if (is.null(devs) || length(devs) == 0) return("")
+
+    # Handle both data frame and list formats
+    if (is.data.frame(devs)) {
+      emails <- devs$profile$email
+    } else if (is.list(devs)) {
+      emails <- sapply(devs, function(dev) {
+        if (is.null(dev$profile) || is.null(dev$profile$email)) return(NA)
+        dev$profile$email
+      })
+    } else {
+      return("")
+    }
+
+    # Remove NA values and paste together
+    emails <- emails[!is.na(emails)]
+    if (length(emails) == 0) return("")
+    paste(emails, collapse = ", ")
+  })
+
+  # Handle tags - convert list to comma-separated strings
+  tags_list <- tracks$tags
+  if (is.list(tags_list)) {
+    tags_str <- sapply(tags_list, function(x) {
+      if (is.null(x) || length(x) == 0) return("")
+      paste(x, collapse = ", ")
+    })
+  } else {
+    tags_str <- rep("", length(tracks$id))
+  }
+
+  # Build data frame
+  df <- data.frame(
+    id = tracks$id,
+    slug = tracks$slug,
+    title = tracks$title,
+    description = ifelse(is.na(tracks$description) | is.null(tracks$description), "", tracks$description),
+    status = tracks$status,
+    owner = ifelse(is.na(tracks$owner) | is.null(tracks$owner), "", tracks$owner),
+    team_access = developers_list,
+    created = ifelse(is.na(tracks$created) | is.null(tracks$created), "", tracks$created),
+    created_at = ifelse(is.na(tracks$createdAt) | is.null(tracks$createdAt), "", tracks$createdAt),
+    last_update = ifelse(is.na(tracks$last_update) | is.null(tracks$last_update), "", tracks$last_update),
+    updated_by_email = updated_by_emails,
+    tags = tags_str,
+    stringsAsFactors = FALSE
+  )
+
+  log_info("Retrieved ", nrow(df), " tracks")
+
+  return(df)
+}
