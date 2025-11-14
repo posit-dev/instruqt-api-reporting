@@ -395,3 +395,189 @@ get_all_tracks <- function(team_slug = Sys.getenv("INSTRUQT_TEAM_SLUG")) {
 
   return(df)
 }
+
+#' Get All Track Invites
+#'
+#' @param team_slug Team slug (defaults to INSTRUQT_TEAM_SLUG env var)
+#' @param play_reports Optional play reports data to calculate usage stats
+#' @return Data frame with invite information including claims and usage
+get_all_invites <- function(team_slug = Sys.getenv("INSTRUQT_TEAM_SLUG"), play_reports = NULL) {
+  log_info("Fetching all invites for team: ", team_slug)
+
+  query <- '
+    query GetInvites($teamSlug: String!) {
+      trackInvites(teamSlug: $teamSlug) {
+        id
+        title
+        publicTitle
+        created
+        authors {
+          id
+          user {
+            profile {
+              email
+            }
+          }
+        }
+        last_updated
+        expiresAt
+        allowAnonymous
+        inviteLimit
+        inviteCount
+        status
+        tracks {
+          id
+          slug
+          title
+          tags
+        }
+      }
+    }
+  '
+
+  variables <- list(
+    teamSlug = team_slug
+  )
+
+  result <- execute_graphql_query(query, variables)
+
+  if (is.null(result$trackInvites) || length(result$trackInvites) == 0) {
+    log_error("No invites returned")
+    return(data.frame())
+  }
+
+  invites <- result$trackInvites
+
+  # Process each invite
+  invites_list <- lapply(seq_len(nrow(invites)), function(i) {
+    invite <- invites[i, ]
+
+    # Extract tracks info (invites can have multiple tracks)
+    tracks_data <- invite$tracks
+
+    # Handle the list structure - tracks_data is a list containing a data.frame
+    if (!is.null(tracks_data) && is.list(tracks_data) && length(tracks_data) > 0) {
+      # Extract the first element which should be the data.frame
+      if (is.data.frame(tracks_data[[1]])) {
+        tracks_df <- tracks_data[[1]]
+      } else {
+        tracks_df <- NULL
+      }
+    } else if (!is.null(tracks_data) && is.data.frame(tracks_data)) {
+      # Direct data.frame (shouldn't happen based on API structure, but handle it)
+      tracks_df <- tracks_data
+    } else {
+      tracks_df <- NULL
+    }
+
+    # Check if we have valid tracks
+    has_tracks <- !is.null(tracks_df) && is.data.frame(tracks_df) && nrow(tracks_df) > 0
+
+    if (has_tracks) {
+      track_id <- tracks_df$id[1]
+      track_slug <- tracks_df$slug[1]
+      track_title <- tracks_df$title[1]
+      # Handle tags which is a list column
+      tags_data <- tracks_df$tags[[1]]
+      if (!is.null(tags_data) && length(tags_data) > 0) {
+        track_tags <- paste(tags_data, collapse = ", ")
+      } else {
+        track_tags <- ""
+      }
+      num_tracks <- nrow(tracks_df)
+    } else {
+      track_id <- ""
+      track_slug <- ""
+      track_title <- ""
+      track_tags <- ""
+      num_tracks <- 0
+    }
+
+    # Get claim count - handle NA values
+    num_claims <- ifelse(is.null(invite$inviteCount) || is.na(invite$inviteCount), 0, invite$inviteCount)
+    max_claims <- ifelse(is.null(invite$inviteLimit) || is.na(invite$inviteLimit), Inf, invite$inviteLimit)
+
+    # Calculate usage stats from play reports if provided
+    total_plays <- 0
+    total_hours <- 0
+    unique_users <- 0
+
+    if (!is.null(play_reports) && nrow(play_reports) > 0) {
+      # Filter play reports for this invite (need to match by invite_id if available)
+      # For now, we'll estimate based on track if invite metadata not in play reports
+      # This is a limitation - may need to enhance play reports query
+    }
+
+    # Safely extract scalar values with NA handling
+    invite_id <- ifelse(is.null(invite$id) || is.na(invite$id), "", as.character(invite$id))
+    invite_title_val <- ifelse(is.null(invite$title) || is.na(invite$title) || invite$title == "",
+                                ifelse(is.null(invite$publicTitle) || is.na(invite$publicTitle), "", as.character(invite$publicTitle)),
+                                as.character(invite$title))
+    public_title_val <- ifelse(is.null(invite$publicTitle) || is.na(invite$publicTitle), "", as.character(invite$publicTitle))
+    created_val <- ifelse(is.null(invite$created) || is.na(invite$created), "", as.character(invite$created))
+
+    # Extract authors/creators emails (can be multiple)
+    # authors is a list containing a data.frame (same structure as tracks)
+    created_by_val <- ""
+    if (!is.null(invite$authors) && is.list(invite$authors) && length(invite$authors) > 0) {
+      # Extract the data.frame from the list
+      if (is.data.frame(invite$authors[[1]])) {
+        authors_df <- invite$authors[[1]]
+        # Try to extract email from nested user profile
+        author_emails <- sapply(seq_len(nrow(authors_df)), function(j) {
+          author <- authors_df[j, ]
+          # Try to get email from user.profile.email
+          if (!is.null(author$user) && is.list(author$user) &&
+              !is.null(author$user$profile) && !is.null(author$user$profile$email)) {
+            return(as.character(author$user$profile$email))
+          }
+          # Fallback: return ID
+          if (!is.null(author$id) && !is.na(author$id)) {
+            return(as.character(author$id))
+          }
+          return(NA)
+        })
+        # Remove NAs and combine into comma-separated string
+        author_emails <- author_emails[!is.na(author_emails) & author_emails != ""]
+        if (length(author_emails) > 0) {
+          created_by_val <- paste(author_emails, collapse = ", ")
+        }
+      }
+    }
+
+    last_updated_val <- ifelse(is.null(invite$last_updated) || is.na(invite$last_updated), "", as.character(invite$last_updated))
+    expires_at_val <- ifelse(is.null(invite$expiresAt) || is.na(invite$expiresAt), "", as.character(invite$expiresAt))
+    allow_anonymous_val <- ifelse(is.null(invite$allowAnonymous) || is.na(invite$allowAnonymous), FALSE, as.logical(invite$allowAnonymous))
+    status_val <- ifelse(is.null(invite$status) || is.na(invite$status), "", as.character(invite$status))
+
+
+    data.frame(
+      invite_id = invite_id,
+      invite_title = invite_title_val,
+      public_title = public_title_val,
+      track_id = track_id,
+      track_slug = track_slug,
+      track_title = track_title,
+      track_tags = track_tags,
+      num_tracks = num_tracks,
+      created = created_val,
+      created_by = created_by_val,
+      last_updated = last_updated_val,
+      expires_at = expires_at_val,
+      status = status_val,
+      max_claims = max_claims,
+      allow_anonymous = allow_anonymous_val,
+      num_claims = num_claims,
+      unique_users = unique_users,
+      total_plays = total_plays,
+      hours_consumed = total_hours,
+      stringsAsFactors = FALSE
+    )
+  })
+
+  df <- do.call(rbind, invites_list)
+
+  log_info("Retrieved ", nrow(df), " invites")
+
+  return(df)
+}

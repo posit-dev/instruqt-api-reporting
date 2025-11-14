@@ -310,24 +310,116 @@ ui <- page_navbar(
         )
       )
     )
+  ),
+
+  # Invites Page
+  nav_panel(
+    title = "Invites",
+    icon = icon("envelope"),
+
+    layout_sidebar(
+      sidebar = sidebar(
+        width = 280,
+
+        selectInput(
+          "invite_track_filter",
+          "Filter by Track:",
+          choices = c("All Tracks" = "all"),
+          width = "100%"
+        ),
+
+        selectInput(
+          "invite_status_filter",
+          "Filter by Status:",
+          choices = c("All" = "all", "Active" = "active", "Expired" = "expired"),
+          selected = "all",
+          width = "100%"
+        ),
+
+        actionButton(
+          "refresh_invites",
+          "Refresh Data",
+          icon = icon("refresh"),
+          width = "100%",
+          class = "btn-primary mt-3"
+        ),
+
+        hr(),
+
+        div(
+          class = "text-muted small",
+          textOutput("invites_last_updated")
+        )
+      ),
+
+      # Main content
+      div(
+        class = "p-3",
+
+        # Summary cards
+        layout_columns(
+          col_widths = c(3, 3, 3, 3),
+
+          value_box(
+            title = "Total Invites",
+            value = textOutput("total_invites_value"),
+            showcase = icon("envelope"),
+            theme = "primary",
+            height = "95px"
+          ),
+
+          value_box(
+            title = "Total Claims",
+            value = textOutput("total_claims_value"),
+            showcase = icon("user-check"),
+            theme = "info",
+            height = "95px"
+          ),
+
+          value_box(
+            title = "Unique Users",
+            value = textOutput("invite_unique_users_value"),
+            showcase = icon("users"),
+            theme = "success",
+            height = "95px"
+          ),
+
+          value_box(
+            title = "Hours Consumed",
+            value = textOutput("invite_hours_value"),
+            showcase = icon("clock"),
+            theme = "warning",
+            height = "95px"
+          )
+        ),
+
+        # Invites table
+        div(
+          class = "mt-3",
+          h4("Invite Details"),
+          DT::dataTableOutput("invites_table")
+        )
+      )
+    )
   )
 )
 
 # Server Logic
 server <- function(input, output, session) {
 
-  # Reactive values (shared between both pages)
+  # Reactive values (shared between all pages)
   rv <- reactiveValues(
     consumption_data = NULL,
     developer_consumption_data = NULL,
     license_total_data = NULL,
     play_reports_data = NULL,
     tracks_data = NULL,
+    invites_data = NULL,
     last_update = NULL
   )
 
-  # Load data on startup and when refresh is clicked from either page
-  observeEvent(c(input$refresh_data, input$refresh_tracks, TRUE), {
+  # Load data on startup and when refresh is clicked from any page
+  observeEvent(c(input$refresh_data, input$refresh_tracks, input$refresh_invites, TRUE), {
     # Show loading notification with spinner
     loading_id <- showNotification(
       ui = tagList(
@@ -413,6 +505,29 @@ server <- function(input, output, session) {
         result
       }, error = function(e) {
         cat("[APP] ERROR loading tracks list:\n")
+        cat("  Message:", e$message, "\n")
+        NULL
+      })
+
+      # Fetch invites
+      cat("\n[APP] Fetching invites...\n")
+      rv$invites_data <- tryCatch({
+        result <- get_all_invites()
+        cat("[APP] Successfully loaded invites\n")
+
+        # Update track filter choices for Invites page
+        if (!is.null(result) && nrow(result) > 0) {
+          all_tracks <- unique(result$track_title)
+          all_tracks <- all_tracks[all_tracks != ""]
+          all_tracks <- sort(all_tracks)
+
+          updateSelectInput(session, "invite_track_filter",
+                           choices = c("All Tracks" = "all", setNames(all_tracks, all_tracks)))
+        }
+
+        result
+      }, error = function(e) {
+        cat("[APP] ERROR loading invites:\n")
         cat("  Message:", e$message, "\n")
         NULL
       })
@@ -917,6 +1032,134 @@ server <- function(input, output, session) {
         )
       ) %>%
       DT::formatRound(columns = c('Active Hours', 'Avg Hours/Play'), digits = 2)
+  })
+
+  # ===== INVITES PAGE LOGIC =====
+
+  # Last updated text for invites page
+  output$invites_last_updated <- renderText({
+    if (!is.null(rv$last_update)) {
+      paste("Updated:", format(rv$last_update, "%b %d, %Y %H:%M:%S"))
+    } else {
+      "Not loaded"
+    }
+  })
+
+  # Filtered invites data
+  filtered_invites <- reactive({
+    req(rv$invites_data)
+
+    data <- rv$invites_data
+
+    # Apply track filter
+    if (input$invite_track_filter != "all") {
+      data <- data %>%
+        filter(track_title == input$invite_track_filter)
+    }
+
+    # Apply status filter using API status
+    if (input$invite_status_filter == "active") {
+      data <- data %>%
+        filter(tolower(status) == "active")
+    } else if (input$invite_status_filter == "expired") {
+      data <- data %>%
+        filter(tolower(status) == "expired")
+    }
+
+    data
+  })
+
+  # Total invites value
+  output$total_invites_value <- renderText({
+    req(filtered_invites())
+    nrow(filtered_invites())
+  })
+
+  # Total claims value
+  output$total_claims_value <- renderText({
+    req(filtered_invites())
+    sum(filtered_invites()$num_claims)
+  })
+
+  # Unique users value (placeholder - not available in current API)
+  output$invite_unique_users_value <- renderText({
+    req(filtered_invites())
+    "N/A"
+  })
+
+  # Hours consumed value (placeholder - not available in current API)
+  output$invite_hours_value <- renderText({
+    req(filtered_invites())
+    "N/A"
+  })
+
+  # Invites table
+  output$invites_table <- DT::renderDataTable({
+    req(filtered_invites())
+
+    filtered_invites() %>%
+      mutate(
+        # Use status from API (capitalize first letter for display)
+        status_display = tools::toTitleCase(tolower(status)),
+        # Safely parse created date with time (ISO 8601 format from API)
+        created_datetime = sapply(created, function(created_val) {
+          if (created_val == "" || created_val == "NA") {
+            return("")
+          }
+          # Parse ISO 8601 format (e.g., "2025-10-31T17:38:53Z")
+          parsed_dt <- tryCatch(
+            as.POSIXct(created_val, format = "%Y-%m-%dT%H:%M:%SZ", tz = "UTC"),
+            error = function(e) NULL
+          )
+          if (is.null(parsed_dt) || is.na(parsed_dt)) {
+            return(created_val)  # Return original if parsing fails
+          }
+          # Convert to Eastern Time
+          et_dt <- format(parsed_dt, "%Y-%m-%d %H:%M", tz = "America/New_York")
+          paste(et_dt, "ET")
+        }),
+        # Safely parse expires date with time (ISO 8601 format from API)
+        expires_datetime = sapply(expires_at, function(exp_at) {
+          if (exp_at == "" || exp_at == "NA") {
+            return("Never")
+          }
+          # Parse ISO 8601 format (e.g., "2025-11-14T17:00:00Z")
+          parsed_dt <- tryCatch(
+            as.POSIXct(exp_at, format = "%Y-%m-%dT%H:%M:%SZ", tz = "UTC"),
+            error = function(e) NULL
+          )
+          if (is.null(parsed_dt) || is.na(parsed_dt)) {
+            return(exp_at)  # Return original if parsing fails
+          }
+          # Convert to Eastern Time
+          et_dt <- format(parsed_dt, "%Y-%m-%d %H:%M", tz = "America/New_York")
+          paste(et_dt, "ET")
+        }),
+        # Format claim rate - convert to integer first
+        claim_rate = ifelse(max_claims == Inf,
+                           sprintf("%d claims", as.integer(num_claims)),
+                           sprintf("%d / %d", as.integer(num_claims), as.integer(max_claims))),
+        # Format track display
+        tracks_display = ifelse(num_tracks == 1, track_title,
+                               ifelse(num_tracks == 0, "No tracks", sprintf("%d tracks", num_tracks)))
+      ) %>%
+      select(
+        Invite = invite_title,
+        Track = tracks_display,
+        Status = status_display,
+        `Created By` = created_by,
+        Created = created_datetime,
+        Expires = expires_datetime,
+        Claims = claim_rate
+      ) %>%
+      DT::datatable(
+        options = list(
+          pageLength = 25,
+          order = list(list(4, 'desc')),  # Sort by Created date descending
+          scrollX = TRUE,
+          autoWidth = TRUE
+        )
+      )
   })
 }
 
