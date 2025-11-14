@@ -358,7 +358,7 @@ ui <- page_navbar(
 
         # Summary cards
         layout_columns(
-          col_widths = c(3, 3, 3, 3),
+          col_widths = c(4, 4, 4),
 
           value_box(
             title = "Total Invites",
@@ -377,18 +377,10 @@ ui <- page_navbar(
           ),
 
           value_box(
-            title = "Unique Users",
-            value = textOutput("invite_unique_users_value"),
-            showcase = icon("users"),
+            title = "Avg Claims per Invite",
+            value = textOutput("avg_claims_per_invite_value"),
+            showcase = icon("chart-line"),
             theme = "success",
-            height = "95px"
-          ),
-
-          value_box(
-            title = "Hours Consumed",
-            value = textOutput("invite_hours_value"),
-            showcase = icon("clock"),
-            theme = "warning",
             height = "95px"
           )
         ),
@@ -1021,17 +1013,43 @@ server <- function(input, output, session) {
         `Avg Hours/Play` = avg_hours_per_play
       ) %>%
       DT::datatable(
+        rownames = FALSE,
+        filter = 'top',
         options = list(
           pageLength = 25,
-          order = list(list(3, 'desc')),  # Sort by Active Hours descending (1-indexed: Track=1, Tags=2, Active Hours=3)
+          order = list(list(2, 'desc')),  # Sort by Active Hours descending (0-indexed)
           scrollX = TRUE,
-          autoWidth = TRUE,
+          autoWidth = FALSE,
+          dom = 'Bfrtip',
+          buttons = c('copy', 'csv', 'excel'),
           columnDefs = list(
-            list(targets = c(3, 5), className = 'dt-right')  # Right-align numeric columns (Active Hours=3, Avg Hours/Play=5)
+            list(targets = c(2, 3, 4), className = 'dt-right'),  # Right-align numeric columns
+            list(width = '40%', targets = 0),  # Track name
+            list(width = '25%', targets = 1),  # Tags
+            list(width = '15%', targets = 2),  # Active Hours
+            list(width = '10%', targets = 3),  # Plays
+            list(width = '10%', targets = 4)   # Avg Hours/Play
+          ),
+          language = list(
+            search = "Search tracks:",
+            lengthMenu = "Show _MENU_ tracks per page"
           )
-        )
+        ),
+        class = 'cell-border stripe hover'
       ) %>%
-      DT::formatRound(columns = c('Active Hours', 'Avg Hours/Play'), digits = 2)
+      DT::formatRound(columns = c('Active Hours', 'Avg Hours/Play'), digits = 2) %>%
+      DT::formatStyle(
+        'Active Hours',
+        background = styleColorBar(range(track_stats()$active_hours), '#3c8dbc'),
+        backgroundSize = '100% 90%',
+        backgroundRepeat = 'no-repeat',
+        backgroundPosition = 'center'
+      ) %>%
+      DT::formatStyle(
+        'Plays',
+        fontWeight = 'bold',
+        color = styleInterval(c(5, 10), c('#999', '#000', '#2c5f91'))
+      )
   })
 
   # ===== INVITES PAGE LOGIC =====
@@ -1081,16 +1099,17 @@ server <- function(input, output, session) {
     sum(filtered_invites()$num_claims)
   })
 
-  # Unique users value (placeholder - not available in current API)
-  output$invite_unique_users_value <- renderText({
+  # Average claims per invite value
+  output$avg_claims_per_invite_value <- renderText({
     req(filtered_invites())
-    "N/A"
-  })
-
-  # Hours consumed value (placeholder - not available in current API)
-  output$invite_hours_value <- renderText({
-    req(filtered_invites())
-    "N/A"
+    total_invites <- nrow(filtered_invites())
+    total_claims <- sum(filtered_invites()$num_claims)
+    if (total_invites > 0) {
+      avg <- total_claims / total_invites
+      sprintf("%.1f", avg)
+    } else {
+      "0"
+    }
   })
 
   # Invites table
@@ -1153,12 +1172,38 @@ server <- function(input, output, session) {
         Claims = claim_rate
       ) %>%
       DT::datatable(
+        rownames = FALSE,
+        filter = 'top',
         options = list(
           pageLength = 25,
-          order = list(list(4, 'desc')),  # Sort by Created date descending
+          order = list(list(4, 'desc')),  # Sort by Created date descending (0-indexed)
           scrollX = TRUE,
-          autoWidth = TRUE
-        )
+          autoWidth = FALSE,
+          dom = 'Bfrtip',
+          buttons = c('copy', 'csv', 'excel'),
+          columnDefs = list(
+            list(targets = c(6), className = 'dt-right'),  # Right-align Claims
+            list(width = '20%', targets = 0),  # Invite
+            list(width = '15%', targets = 1),  # Track
+            list(width = '10%', targets = 2),  # Status
+            list(width = '15%', targets = 3),  # Created By
+            list(width = '15%', targets = 4),  # Created
+            list(width = '15%', targets = 5),  # Expires
+            list(width = '10%', targets = 6)   # Claims
+          ),
+          language = list(
+            search = "Search invites:",
+            lengthMenu = "Show _MENU_ invites per page"
+          )
+        ),
+        class = 'cell-border stripe hover'
+      ) %>%
+      DT::formatStyle(
+        'Status',
+        backgroundColor = styleEqual(c('Active', 'Expired'), c('#d4edda', '#f8d7da')),
+        color = styleEqual(c('Active', 'Expired'), c('#155724', '#721c24')),
+        fontWeight = 'bold',
+        textAlign = 'center'
       )
   })
 }
