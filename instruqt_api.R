@@ -192,6 +192,7 @@ get_play_reports <- function(limit = 50, offset = 0, team_slug = Sys.getenv("INS
             tags
           }
           user {
+            is_anonymous
             profile {
               email
             }
@@ -246,6 +247,9 @@ get_all_play_reports <- function(max_records = 1000, page_size = 100) {
   user_df <- items_df$user
   profile_df <- user_df$profile
 
+  # Check if user is anonymous
+  is_anonymous <- ifelse(is.null(user_df$is_anonymous) | is.na(user_df$is_anonymous), FALSE, user_df$is_anonymous)
+
   # Extract tags - handle both list and character vector formats
   tags_list <- track_df$tags
   if (is.list(tags_list)) {
@@ -258,6 +262,18 @@ get_all_play_reports <- function(max_records = 1000, page_size = 100) {
     tags_str <- rep("", nrow(track_df))
   }
 
+  # Create user display - use email or "Anonymous" based on is_anonymous flag
+  user_display <- sapply(seq_len(nrow(profile_df)), function(i) {
+    if (is_anonymous[i]) {
+      return("Anonymous")
+    }
+    # Use email if available
+    if (!is.null(profile_df$email[i]) && !is.na(profile_df$email[i]) && profile_df$email[i] != "") {
+      return(as.character(profile_df$email[i]))
+    }
+    return("Anonymous")
+  })
+
   # Build data frame
   df <- data.frame(
     id = items_df$id,
@@ -265,7 +281,9 @@ get_all_play_reports <- function(max_records = 1000, page_size = 100) {
     trackSlug = track_df$slug,
     trackTitle = track_df$title,
     trackTags = tags_str,
-    userEmail = profile_df$email,
+    userEmail = ifelse(is.na(profile_df$email) | profile_df$email == "", "", profile_df$email),
+    userName = user_display,
+    isAnonymous = is_anonymous,
     completionPercent = ifelse(is.na(items_df$completionPercent), 0, items_df$completionPercent),
     timeSpent = ifelse(is.na(items_df$timeSpent), 0, items_df$timeSpent),
     hoursConsumed = ifelse(is.na(items_df$timeSpent), 0, items_df$timeSpent / 3600),

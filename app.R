@@ -312,6 +312,89 @@ ui <- page_navbar(
     )
   ),
 
+  # Users Page
+  nav_panel(
+    title = "Users",
+    icon = icon("users"),
+
+    layout_sidebar(
+      sidebar = sidebar(
+        width = 280,
+
+        dateRangeInput(
+          "users_date_range",
+          "Date Range:",
+          start = "2025-05-10",
+          end = Sys.Date(),
+          width = "100%"
+        ),
+
+        selectInput(
+          "user_track_filter",
+          "Filter by Track:",
+          choices = c("All Tracks" = "all"),
+          width = "100%"
+        ),
+
+        actionButton(
+          "refresh_users",
+          "Refresh Data",
+          icon = icon("refresh"),
+          width = "100%",
+          class = "btn-primary mt-3"
+        ),
+
+        hr(),
+
+        div(
+          class = "text-muted small",
+          textOutput("users_last_updated")
+        )
+      ),
+
+      # Main content
+      div(
+        class = "p-3",
+
+        # Summary cards
+        layout_columns(
+          col_widths = c(4, 4, 4),
+
+          value_box(
+            title = "Total Users",
+            value = textOutput("total_users_value"),
+            showcase = icon("users"),
+            theme = "primary",
+            height = "95px"
+          ),
+
+          value_box(
+            title = "Total Plays",
+            value = textOutput("user_total_plays_value"),
+            showcase = icon("play"),
+            theme = "info",
+            height = "95px"
+          ),
+
+          value_box(
+            title = "Total Hours",
+            value = textOutput("user_total_hours_value"),
+            showcase = icon("clock"),
+            theme = "success",
+            height = "95px"
+          )
+        ),
+
+        # Users table
+        div(
+          class = "mt-3",
+          h4("User Details"),
+          DT::dataTableOutput("users_table")
+        )
+      )
+    )
+  ),
+
   # Invites Page
   nav_panel(
     title = "Invites",
@@ -411,7 +494,7 @@ server <- function(input, output, session) {
   )
 
   # Load data on startup and when refresh is clicked from any page
-  observeEvent(c(input$refresh_data, input$refresh_tracks, input$refresh_invites, TRUE), {
+  observeEvent(c(input$refresh_data, input$refresh_tracks, input$refresh_users, input$refresh_invites, TRUE), {
     # Show loading notification with spinner
     loading_id <- showNotification(
       ui = tagList(
@@ -1049,6 +1132,125 @@ server <- function(input, output, session) {
         'Plays',
         fontWeight = 'bold',
         color = styleInterval(c(5, 10), c('#999', '#000', '#2c5f91'))
+      )
+  })
+
+  # ===== USERS PAGE LOGIC =====
+
+  # Last updated text for users page
+  output$users_last_updated <- renderText({
+    if (!is.null(rv$last_update)) {
+      paste("Updated:", format(rv$last_update, "%b %d, %Y %H:%M:%S"))
+    } else {
+      "Not loaded"
+    }
+  })
+
+  # Update user track filter choices
+  observe({
+    req(rv$tracks_data)
+    if (!is.null(rv$tracks_data) && nrow(rv$tracks_data) > 0) {
+      all_tracks <- unique(rv$tracks_data$title)
+      all_tracks <- all_tracks[all_tracks != ""]
+      all_tracks <- sort(all_tracks)
+
+      updateSelectInput(session, "user_track_filter",
+                       choices = c("All Tracks" = "all", setNames(all_tracks, all_tracks)))
+    }
+  })
+
+  # Filtered user data
+  filtered_user_data <- reactive({
+    req(rv$play_reports_data)
+
+    data <- rv$play_reports_data %>%
+      mutate(date = as.Date(started)) %>%
+      filter(date >= input$users_date_range[1] & date <= input$users_date_range[2])
+
+    # Apply track filter
+    if (input$user_track_filter != "all") {
+      data <- data %>%
+        filter(trackTitle == input$user_track_filter)
+    }
+
+    data
+  })
+
+  # User statistics
+  user_stats <- reactive({
+    req(filtered_user_data())
+
+    filtered_user_data() %>%
+      group_by(userName, userEmail) %>%
+      summarise(
+        total_plays = n(),
+        total_hours = sum(hoursConsumed, na.rm = TRUE),
+        avg_completion = mean(completionPercent, na.rm = TRUE),
+        tracks_accessed = n_distinct(trackTitle),
+        is_anonymous = any(isAnonymous),
+        .groups = "drop"
+      ) %>%
+      arrange(desc(total_hours))
+  })
+
+  # Total users value
+  output$total_users_value <- renderText({
+    req(user_stats())
+    nrow(user_stats())
+  })
+
+  # Total plays value
+  output$user_total_plays_value <- renderText({
+    req(user_stats())
+    sum(user_stats()$total_plays)
+  })
+
+  # Total hours value
+  output$user_total_hours_value <- renderText({
+    req(user_stats())
+    sprintf("%.1f hrs", sum(user_stats()$total_hours))
+  })
+
+  # Users table
+  output$users_table <- DT::renderDataTable({
+    req(user_stats())
+
+    user_stats() %>%
+      select(
+        User = userName,
+        Email = userEmail,
+        Plays = total_plays,
+        `Hours Consumed` = total_hours,
+        `Avg Completion %` = avg_completion,
+        `Tracks Accessed` = tracks_accessed
+      ) %>%
+      DT::datatable(
+        rownames = FALSE,
+        filter = 'top',
+        options = list(
+          pageLength = 25,
+          order = list(list(3, 'desc')),  # Sort by Hours descending
+          scrollX = TRUE,
+          autoWidth = FALSE,
+          dom = 'Bfrtip',
+          buttons = c('copy', 'csv', 'excel'),
+          columnDefs = list(
+            list(targets = c(2, 3, 4, 5), className = 'dt-right')
+          ),
+          language = list(
+            search = "Search users:",
+            lengthMenu = "Show _MENU_ users per page"
+          )
+        ),
+        class = 'cell-border stripe hover'
+      ) %>%
+      DT::formatRound(columns = c('Hours Consumed', 'Avg Completion %'), digits = 1) %>%
+      DT::formatStyle(
+        'Hours Consumed',
+        background = styleColorBar(range(user_stats()$total_hours), '#3c8dbc'),
+        backgroundSize = '100% 90%',
+        backgroundRepeat = 'no-repeat',
+        backgroundPosition = 'center'
       )
   })
 
