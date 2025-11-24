@@ -307,7 +307,7 @@ get_all_play_reports <- function(max_records = 1000, page_size = 100) {
 #' Get All Tracks with Metadata
 #'
 #' @param team_slug Team slug (defaults to INSTRUQT_TEAM_SLUG env var)
-#' @return Data frame with track metadata including owner, created/modified dates, and description
+#' @return Data frame with track metadata including owner, created/modified dates, description, and configuration
 get_all_tracks <- function(team_slug = Sys.getenv("INSTRUQT_TEAM_SLUG")) {
   log_info("Fetching all tracks for team: ", team_slug)
 
@@ -335,6 +335,16 @@ get_all_tracks <- function(team_slug = Sys.getenv("INSTRUQT_TEAM_SLUG")) {
             }
           }
           tags
+          timelimit
+          idle_timeout
+          trackConfig {
+            version
+            virtualmachines {
+              name
+              image
+              machine_type
+            }
+          }
         }
       }
     }
@@ -352,6 +362,20 @@ get_all_tracks <- function(team_slug = Sys.getenv("INSTRUQT_TEAM_SLUG")) {
   }
 
   tracks <- result$team$tracks
+
+  # Debug: Check if trackConfig field exists and what it looks like
+  log_info("TrackConfig field structure:")
+  log_info("  - Has trackConfig field: ", !is.null(tracks$trackConfig))
+  if (!is.null(tracks$trackConfig)) {
+    log_info("  - trackConfig class: ", class(tracks$trackConfig))
+    log_info("  - trackConfig length: ", length(tracks$trackConfig))
+    if (length(tracks$trackConfig) > 0) {
+      log_info("  - First trackConfig entry class: ", class(tracks$trackConfig[[1]]))
+      if (is.list(tracks$trackConfig[[1]])) {
+        log_info("  - First trackConfig entry names: ", paste(names(tracks$trackConfig[[1]]), collapse=", "))
+      }
+    }
+  }
 
   # Extract updated_by information
   updated_by_emails <- sapply(tracks$updated_by, function(x) {
@@ -392,6 +416,116 @@ get_all_tracks <- function(team_slug = Sys.getenv("INSTRUQT_TEAM_SLUG")) {
     tags_str <- rep("", length(tracks$id))
   }
 
+  # Extract virtual machine information from config
+  # Initialize result vectors
+  num_tracks <- length(tracks$id)
+  vm_names <- character(num_tracks)
+  vm_images <- character(num_tracks)
+  vm_machine_types <- character(num_tracks)
+  vm_count <- numeric(num_tracks)
+  gcp_projects_count <- numeric(num_tracks)
+  aws_accounts_count <- numeric(num_tracks)
+  azure_subscriptions_count <- numeric(num_tracks)
+  containers_count <- numeric(num_tracks)
+
+  # Check if trackConfig field exists and has data
+  if (is.null(tracks$trackConfig) || nrow(tracks$trackConfig) == 0) {
+    log_info("No trackConfig data available")
+    # Leave all fields empty/zero (already initialized)
+  } else {
+    log_info("Processing trackConfig data for ", num_tracks, " tracks")
+    log_info("trackConfig is a data.frame with ", nrow(tracks$trackConfig), " rows and columns: ", paste(names(tracks$trackConfig), collapse=", "))
+
+    # trackConfig is a data.frame where each row corresponds to a track
+    # Process each track's config
+    for (i in seq_len(num_tracks)) {
+      # Check if we have trackConfig data for this track
+      if (i > nrow(tracks$trackConfig)) {
+        vm_names[i] <- ""
+        vm_images[i] <- ""
+        vm_machine_types[i] <- ""
+        vm_count[i] <- 0
+        gcp_projects_count[i] <- 0
+        aws_accounts_count[i] <- 0
+        azure_subscriptions_count[i] <- 0
+        containers_count[i] <- 0
+        next
+      }
+
+    # Extract VMs from the trackConfig data frame
+    # The virtualmachines column contains a list for each track
+    vms <- if ("virtualmachines" %in% names(tracks$trackConfig)) {
+      tracks$trackConfig$virtualmachines[[i]]
+    } else {
+      NULL
+    }
+
+    if (i == 1) {  # Log details for first track only
+      log_info("First track VM data structure:")
+      log_info("  - vms is null: ", is.null(vms))
+      if (!is.null(vms)) {
+        log_info("  - vms class: ", class(vms))
+        log_info("  - vms length: ", length(vms))
+        if (is.list(vms) && length(vms) > 0) {
+          log_info("  - vms[[1]] class: ", class(vms[[1]]))
+          if (is.data.frame(vms[[1]])) {
+            log_info("  - vms[[1]] nrow: ", nrow(vms[[1]]))
+            log_info("  - vms[[1]] names: ", paste(names(vms[[1]]), collapse = ", "))
+          }
+        } else if (is.data.frame(vms)) {
+          log_info("  - vms nrow: ", nrow(vms))
+          log_info("  - vms names: ", paste(names(vms), collapse = ", "))
+        }
+      }
+    }
+
+    if (!is.null(vms)) {
+      # Handle list containing data frame
+      if (is.list(vms) && length(vms) > 0 && is.data.frame(vms[[1]])) {
+        vms_df <- vms[[1]]
+      } else if (is.data.frame(vms)) {
+        vms_df <- vms
+      } else {
+        vms_df <- NULL
+      }
+
+      if (!is.null(vms_df) && nrow(vms_df) > 0) {
+        names_vec <- vms_df$name[!is.na(vms_df$name) & vms_df$name != ""]
+        images_vec <- vms_df$image[!is.na(vms_df$image) & vms_df$image != ""]
+        machine_types_vec <- vms_df$machine_type[!is.na(vms_df$machine_type) & vms_df$machine_type != ""]
+
+        vm_names[i] <- paste(names_vec, collapse = ", ")
+        vm_images[i] <- paste(unique(images_vec), collapse = ", ")
+        vm_machine_types[i] <- paste(unique(machine_types_vec), collapse = ", ")
+        vm_count[i] <- length(names_vec)
+
+        if (i == 1) {  # Log first track results
+          log_info("  - Extracted ", length(names_vec), " VMs")
+          log_info("  - VM names: ", vm_names[i])
+          log_info("  - VM images: ", vm_images[i])
+          log_info("  - VM machine types: ", vm_machine_types[i])
+        }
+      } else {
+        vm_names[i] <- ""
+        vm_images[i] <- ""
+        vm_machine_types[i] <- ""
+        vm_count[i] <- 0
+      }
+    } else {
+      vm_names[i] <- ""
+      vm_images[i] <- ""
+      vm_machine_types[i] <- ""
+      vm_count[i] <- 0
+    }
+
+    # Set other resource counts to 0 (not queried in current implementation)
+    gcp_projects_count[i] <- 0
+    aws_accounts_count[i] <- 0
+    azure_subscriptions_count[i] <- 0
+    containers_count[i] <- 0
+    }  # end for loop
+  }  # end else block
+
   # Build data frame
   df <- data.frame(
     id = tracks$id,
@@ -406,6 +540,16 @@ get_all_tracks <- function(team_slug = Sys.getenv("INSTRUQT_TEAM_SLUG")) {
     last_update = ifelse(is.na(tracks$last_update) | is.null(tracks$last_update), "", tracks$last_update),
     updated_by_email = updated_by_emails,
     tags = tags_str,
+    timelimit = ifelse(is.na(tracks$timelimit) | is.null(tracks$timelimit), 0, as.numeric(tracks$timelimit)),
+    idle_timeout = ifelse(is.na(tracks$idle_timeout) | is.null(tracks$idle_timeout), 0, as.numeric(tracks$idle_timeout)),
+    vm_names = vm_names,
+    vm_images = vm_images,
+    vm_machine_types = vm_machine_types,
+    num_vms = vm_count,
+    num_gcp_projects = gcp_projects_count,
+    num_aws_accounts = aws_accounts_count,
+    num_azure_subscriptions = azure_subscriptions_count,
+    num_containers = containers_count,
     stringsAsFactors = FALSE
   )
 

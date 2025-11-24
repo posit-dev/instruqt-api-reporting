@@ -312,6 +312,81 @@ ui <- page_navbar(
     )
   ),
 
+  # Track Configuration Page
+  nav_panel(
+    title = "Track Config",
+    icon = icon("cog"),
+
+    layout_sidebar(
+      sidebar = sidebar(
+        width = 280,
+
+        selectInput(
+          "config_tag_filter",
+          "Filter by Tag:",
+          choices = c("All Tags" = "all"),
+          width = "100%"
+        ),
+
+        actionButton(
+          "refresh_config",
+          "Refresh Data",
+          icon = icon("refresh"),
+          width = "100%",
+          class = "btn-primary mt-3"
+        ),
+
+        hr(),
+
+        div(
+          class = "text-muted small",
+          textOutput("config_last_updated")
+        )
+      ),
+
+      # Main content
+      div(
+        class = "p-3",
+
+        # Summary cards
+        layout_columns(
+          col_widths = c(4, 4, 4),
+
+          value_box(
+            title = "Total Tracks",
+            value = textOutput("config_total_tracks_value"),
+            showcase = icon("list"),
+            theme = "primary",
+            height = "95px"
+          ),
+
+          value_box(
+            title = "Avg Time Limit",
+            value = textOutput("config_avg_timelimit_value"),
+            showcase = icon("clock"),
+            theme = "info",
+            height = "95px"
+          ),
+
+          value_box(
+            title = "Total VMs",
+            value = textOutput("config_total_vms_value"),
+            showcase = icon("server"),
+            theme = "success",
+            height = "95px"
+          )
+        ),
+
+        # Track config table
+        div(
+          class = "mt-3",
+          h4("Track Configuration Details"),
+          DT::dataTableOutput("config_table")
+        )
+      )
+    )
+  ),
+
   # Users Page
   nav_panel(
     title = "Users",
@@ -494,7 +569,7 @@ server <- function(input, output, session) {
   )
 
   # Load data on startup and when refresh is clicked from any page
-  observeEvent(c(input$refresh_data, input$refresh_tracks, input$refresh_users, input$refresh_invites, TRUE), {
+  observeEvent(c(input$refresh_data, input$refresh_tracks, input$refresh_config, input$refresh_users, input$refresh_invites, TRUE), {
     # Show loading notification with spinner
     loading_id <- showNotification(
       ui = tagList(
@@ -567,13 +642,15 @@ server <- function(input, output, session) {
         result <- get_all_tracks()
         cat("[APP] Successfully loaded tracks list\n")
 
-        # Update tag filter choices for Tracks page based on active tracks
+        # Update tag filter choices for Tracks and Config pages based on active tracks
         if (!is.null(result) && nrow(result) > 0) {
           all_tags <- unique(unlist(strsplit(result$tags, ", ")))
           all_tags <- all_tags[all_tags != ""]
           all_tags <- sort(all_tags)
 
           updateSelectInput(session, "track_tag_filter",
+                           choices = c("All Tags" = "all", setNames(all_tags, all_tags)))
+          updateSelectInput(session, "config_tag_filter",
                            choices = c("All Tags" = "all", setNames(all_tags, all_tags)))
         }
 
@@ -1252,6 +1329,104 @@ server <- function(input, output, session) {
         backgroundRepeat = 'no-repeat',
         backgroundPosition = 'center'
       )
+  })
+
+  # ===== TRACK CONFIGURATION PAGE LOGIC =====
+
+  # Last updated text for config page
+  output$config_last_updated <- renderText({
+    if (!is.null(rv$last_update)) {
+      paste("Updated:", format(rv$last_update, "%b %d, %Y %H:%M:%S"))
+    } else {
+      "Not loaded"
+    }
+  })
+
+  # Filtered track config data based on tag
+  filtered_config_data <- reactive({
+    req(rv$tracks_data)
+
+    data <- rv$tracks_data
+
+    # Apply tag filter
+    if (input$config_tag_filter != "all") {
+      data <- data %>%
+        filter(grepl(input$config_tag_filter, tags, fixed = TRUE))
+    }
+
+    data
+  })
+
+  # Total tracks value
+  output$config_total_tracks_value <- renderText({
+    req(filtered_config_data())
+    nrow(filtered_config_data())
+  })
+
+  # Average time limit value
+  output$config_avg_timelimit_value <- renderText({
+    req(filtered_config_data())
+    avg_limit <- mean(filtered_config_data()$timelimit[filtered_config_data()$timelimit > 0], na.rm = TRUE)
+    if (is.nan(avg_limit) || is.na(avg_limit)) {
+      "N/A"
+    } else {
+      sprintf("%.0f min", avg_limit / 60)
+    }
+  })
+
+  # Total VMs value
+  output$config_total_vms_value <- renderText({
+    req(filtered_config_data())
+    sum(filtered_config_data()$num_vms)
+  })
+
+  # Config table
+  output$config_table <- DT::renderDataTable({
+    req(filtered_config_data())
+
+    filtered_config_data() %>%
+      mutate(
+        # Convert seconds to minutes for display
+        timelimit_min = ifelse(timelimit > 0, timelimit / 60, 0),
+        idle_timeout_min = ifelse(idle_timeout > 0, idle_timeout / 60, 0)
+      ) %>%
+      select(
+        Track = title,
+        Tags = tags,
+        `Time Limit (min)` = timelimit_min,
+        `Idle Timeout (min)` = idle_timeout_min,
+        `VM Names` = vm_names,
+        `Machine Types` = vm_machine_types,
+        `VM Images` = vm_images
+      ) %>%
+      DT::datatable(
+        rownames = FALSE,
+        filter = 'top',
+        options = list(
+          pageLength = 25,
+          order = list(list(0, 'asc')),  # Sort by Track name ascending
+          scrollX = TRUE,
+          autoWidth = FALSE,
+          dom = 'Bfrtip',
+          buttons = c('copy', 'csv', 'excel'),
+          columnDefs = list(
+            list(targets = c(2, 3), className = 'dt-right'),  # Right-align numeric columns
+            list(width = '15%', targets = 0),  # Track
+            list(width = '12%', targets = 1),  # Tags
+            list(width = '10%', targets = 2),  # Time Limit
+            list(width = '10%', targets = 3),  # Idle Timeout
+            list(width = '15%', targets = 4),  # VM Names
+            list(width = '15%', targets = 5),  # Machine Types
+            list(width = '23%', targets = 6)   # VM Images
+          ),
+          language = list(
+            search = "Search tracks:",
+            lengthMenu = "Show _MENU_ tracks per page"
+          )
+        ),
+        class = 'cell-border stripe hover'
+      ) %>%
+      DT::formatRound(columns = c('Time Limit (min)', 'Idle Timeout (min)'), digits = 0)
   })
 
   # ===== INVITES PAGE LOGIC =====
