@@ -131,7 +131,7 @@ ui <- page_navbar(
         dateRangeInput(
           "date_range",
           "Date Range:",
-          start = "2025-05-10",
+          start = "2025-11-21",
           end = Sys.Date(),
           width = "100%"
         ),
@@ -249,7 +249,7 @@ ui <- page_navbar(
         dateRangeInput(
           "tracks_date_range",
           "Date Range:",
-          start = "2025-05-10",
+          start = "2025-11-21",
           end = Sys.Date(),
           width = "100%"
         ),
@@ -399,7 +399,7 @@ ui <- page_navbar(
         dateRangeInput(
           "users_date_range",
           "Date Range:",
-          start = "2025-05-10",
+          start = "2025-11-21",
           end = Sys.Date(),
           width = "100%"
         ),
@@ -610,10 +610,10 @@ server <- function(input, output, session) {
         NULL
       })
 
-      # Always fetch total since license start (May 10, 2025)
+      # Always fetch total since license start (November 21, 2025)
       cat("\n[APP] Fetching license total consumption data...\n")
       rv$license_total_data <- tryCatch({
-        license_start <- "2025-05-10T00:00:00Z"
+        license_start <- "2025-11-21T00:00:00Z"
         today <- format(Sys.Date(), "%Y-%m-%dT23:59:59Z")
         result <- get_consumption_details(license_start, today, play_type = "ALL")
         cat("[APP] Successfully loaded license total data\n")
@@ -773,7 +773,7 @@ server <- function(input, output, session) {
   output$license_usage_value <- renderText({
     req(rv$license_total_data)
 
-    LICENSE_LIMIT <- 1000
+    LICENSE_LIMIT <- 5000
     total_hours <- sum(rv$license_total_data$sandboxHours, na.rm = TRUE)
     usage_percent <- (total_hours / LICENSE_LIMIT) * 100
     sprintf("%.1f%%", usage_percent)
@@ -783,7 +783,7 @@ server <- function(input, output, session) {
   output$license_usage_box <- renderUI({
     req(rv$license_total_data)
 
-    LICENSE_LIMIT <- 1000
+    LICENSE_LIMIT <- 5000
     total_hours <- sum(rv$license_total_data$sandboxHours, na.rm = TRUE)
     usage_percent <- (total_hours / LICENSE_LIMIT) * 100
 
